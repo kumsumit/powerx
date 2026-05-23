@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../cubit/editor_cubit.dart';
+import '../utils/shortcut_manager.dart';
 import 'ribbon/ribbon.dart';
 import 'canvas/canvas_area.dart';
 import 'panels/slide_thumbnail_panel.dart';
@@ -53,23 +54,50 @@ class EditorShell extends StatelessWidget {
           );
         }
 
-        return Scaffold(
-          body: Column(
-            children: [
-              const Ribbon(),
-              Expanded(
-                child: Row(
-                  children: [
-                    const SizedBox(width: 260, child: SlideThumbnailPanel()),
-                    const VerticalDivider(width: 1),
-                    Expanded(child: CanvasArea(zoom: state.canvasZoom)),
-                    const VerticalDivider(width: 1),
-                    SizedBox(width: 300, child: PropertiesPanel()),
-                  ],
+        final cubit = context.read<EditorCubit>();
+        return EditorShortcuts(
+          shortcuts: {
+            EditorShortcutActivators.ctrlZ: cubit.undo,
+            EditorShortcutActivators.ctrlY: cubit.redo,
+            EditorShortcutActivators.ctrlShiftZ: cubit.redo,
+            EditorShortcutActivators.ctrlN: cubit.newPresentation,
+            EditorShortcutActivators.ctrlC: () {
+              final id = cubit.state.selectedElementId;
+              if (id != null) cubit.copyElement(id);
+            },
+            EditorShortcutActivators.ctrlV: cubit.pasteElement,
+            EditorShortcutActivators.ctrlX: () {
+              final id = cubit.state.selectedElementId;
+              if (id != null) cubit.cutElement(id);
+            },
+            EditorShortcutActivators.ctrlD: () {
+              final id = cubit.state.selectedElementId;
+              if (id != null) cubit.copyElement(id);
+              cubit.pasteElement();
+            },
+            EditorShortcutActivators.delete: cubit.deleteSelected,
+            EditorShortcutActivators.escape: () => cubit.selectElement(null),
+            EditorShortcutActivators.f5: cubit.startPresentation,
+            EditorShortcutActivators.shiftF5: () => cubit.startPresentation(presenterView: true),
+          },
+          child: Scaffold(
+            body: Column(
+              children: [
+                const Ribbon(),
+                Expanded(
+                  child: Row(
+                    children: [
+                      const SizedBox(width: 260, child: SlideThumbnailPanel()),
+                      const VerticalDivider(width: 1),
+                      Expanded(child: CanvasArea(zoom: state.canvasZoom)),
+                      const VerticalDivider(width: 1),
+                      SizedBox(width: 300, child: PropertiesPanel()),
+                    ],
+                  ),
                 ),
-              ),
-              const StatusBar(),
-            ],
+                const StatusBar(),
+              ],
+            ),
           ),
         );
       },

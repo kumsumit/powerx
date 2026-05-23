@@ -45,9 +45,7 @@ class SlideThumbnailPanel extends StatelessWidget {
             child: ReorderableListView.builder(
               buildDefaultDragHandles: false,
               itemCount: state.presentation.slides.length,
-              onReorder: (oldIndex, newIndex) {
-                // Reorder logic would go here
-              },
+              onReorder: cubit.reorderSlides,
               itemBuilder: (context, index) {
                 final slide = state.presentation.slides[index];
                 final isActive = index == state.presentation.activeSlideIndex;

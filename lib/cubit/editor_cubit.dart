@@ -8,6 +8,8 @@ import '../models/elements.dart';
 import '../models/text_styles.dart';
 import '../models/animation.dart';
 import '../models/theme.dart';
+import '../models/table.dart' as pt;
+import '../models/chart.dart';
 import '../engine/command_pattern.dart';
 import '../engine/pptx_importer.dart';
 import '../engine/pptx_exporter.dart';
@@ -93,6 +95,7 @@ class EditorState extends Equatable {
     activeTool,
     canvasZoom,
     isPresentationMode,
+    isPresenterView,
     isDirty,
     errorMessage,
     canUndo,
@@ -122,6 +125,7 @@ enum Tool {
 class EditorCubit extends Cubit<EditorState> {
   final _uuid = const Uuid();
   final CommandHistory _history = CommandHistory(maxSize: 200);
+  SlideElement? _clipboard;
 
   EditorCubit()
     : super(
@@ -148,13 +152,7 @@ class EditorCubit extends Cubit<EditorState> {
 
   void _executeCommand(EditorCommand cmd) {
     _history.execute(cmd);
-    emit(
-      state.copyWith(
-        canUndo: _history.canUndo,
-        canRedo: _history.canRedo,
-        isDirty: true,
-      ),
-    );
+    // _updatePresentation (called inside cmd.execute) already emits with canUndo/canRedo/isDirty
   }
 
   void undo() {
@@ -164,7 +162,6 @@ class EditorCubit extends Cubit<EditorState> {
         canUndo: _history.canUndo,
         canRedo: _history.canRedo,
         isDirty: true,
-        clearSelection: true,
       ),
     );
   }
@@ -176,7 +173,6 @@ class EditorCubit extends Cubit<EditorState> {
         canUndo: _history.canUndo,
         canRedo: _history.canRedo,
         isDirty: true,
-        clearSelection: true,
       ),
     );
   }
@@ -427,6 +423,17 @@ class EditorCubit extends Cubit<EditorState> {
     _updateSlide(slide.copyWith(transition: transition));
   }
 
+  void applyTransitionToAllSlides(SlideTransition transition) {
+    final slides = state.presentation.slides
+        .map((s) => s.copyWith(transition: transition))
+        .toList();
+    _updatePresentation(state.presentation.copyWith(slides: slides));
+  }
+
+  void updateSlideAnimations(AnimationTimeline animations) {
+    _updateSlide(state.activeSlide.copyWith(animations: animations));
+  }
+
   void _updateSlide(Slide slide) {
     final slides = List<Slide>.from(state.presentation.slides);
     slides[state.presentation.activeSlideIndex] = slide;
@@ -434,4 +441,154 @@ class EditorCubit extends Cubit<EditorState> {
   }
 
   void clearError() => emit(state.copyWith(clearError: true));
+
+  // ── Clipboard ──────────────────────────────────────────────────────────────
+
+  void copyElement(String id) {
+    try {
+      _clipboard = state.activeSlide.elements.firstWhere((e) => e.id == id);
+    } catch (_) {}
+  }
+
+  void cutElement(String id) {
+    copyElement(id);
+    deleteSelected();
+  }
+
+  void pasteElement() {
+    if (_clipboard == null) return;
+    final el = _clipboard!;
+    final newId = _uuid.v4();
+    final offset = Offset(el.position.dx + 20, el.position.dy + 20);
+    final newZ = state.activeSlide.elements.length;
+    late SlideElement newEl;
+
+    if (el is TextElement) {
+      newEl = TextElement(
+        id: newId, position: offset, size: el.size, rotation: el.rotation,
+        zIndex: newZ, paragraphs: el.paragraphs, wrapText: el.wrapText,
+        autoFit: el.autoFit, padding: el.padding,
+        fillColor: el.fillColor, borderWidth: el.borderWidth,
+        borderColor: el.borderColor,
+      );
+    } else if (el is ShapeElement) {
+      newEl = ShapeElement(
+        id: newId, position: offset, size: el.size, rotation: el.rotation,
+        zIndex: newZ, fillColor: el.fillColor, strokeColor: el.strokeColor,
+        strokeWidth: el.strokeWidth, shapeType: el.shapeType,
+        cornerRadius: el.cornerRadius, shadow: el.shadow,
+      );
+    } else if (el is ImageElement) {
+      newEl = ImageElement(
+        id: newId, position: offset, size: el.size, rotation: el.rotation,
+        zIndex: newZ, imagePath: el.imagePath, fillMode: el.fillMode,
+      );
+    } else {
+      return;
+    }
+    addElement(newEl);
+  }
+
+  // ── Insertion helpers ───────────────────────────────────────────────────────
+
+  void insertTable(int rows, int cols) {
+    final ss = state.presentation.settings.slideSize;
+    final tableWidth = ss.width * 0.6;
+    final colWidth = tableWidth / cols;
+    const rowHeight = 40.0;
+    final tableHeight = rows * rowHeight;
+
+    final columns = List.generate(cols, (_) => pt.TableColumn(id: _uuid.v4(), width: colWidth));
+    final tableRows = List.generate(rows, (_) => pt.TableRow(id: _uuid.v4(), height: rowHeight));
+    final cells = <pt.TableCell>[
+      for (final row in tableRows)
+        for (final col in columns)
+          pt.TableCell(
+            id: _uuid.v4(), rowId: row.id, colId: col.id,
+            paragraphs: const [RichParagraph(runs: [TextRun(text: '')])],
+          ),
+    ];
+    addElement(pt.TableElement(
+      id: _uuid.v4(),
+      position: Offset((ss.width - tableWidth) / 2, (ss.height - tableHeight) / 2),
+      size: Size(tableWidth, tableHeight),
+      rows: tableRows, columns: columns, cells: cells,
+      zIndex: state.activeSlide.elements.length,
+    ));
+  }
+
+  void insertChart(ChartType type) {
+    final ss = state.presentation.settings.slideSize;
+    addElement(ChartElement(
+      id: _uuid.v4(),
+      position: Offset(ss.width * 0.2, ss.height * 0.2),
+      size: Size(ss.width * 0.6, ss.height * 0.55),
+      type: type,
+      hasTitle: true,
+      title: 'Chart Title',
+      data: ChartData(
+        categories: ['Q1', 'Q2', 'Q3', 'Q4'],
+        series: [
+          ChartSeries(name: 'Series 1', values: [4.2, 2.8, 5.1, 3.6], color: const Color(0xFF4472C4)),
+          ChartSeries(name: 'Series 2', values: [2.5, 4.0, 2.0, 4.8], color: const Color(0xFFED7D31)),
+        ],
+      ),
+      zIndex: state.activeSlide.elements.length,
+    ));
+  }
+
+  void insertImage(String imagePath) {
+    final ss = state.presentation.settings.slideSize;
+    addElement(ImageElement(
+      id: _uuid.v4(),
+      position: Offset(ss.width * 0.25, ss.height * 0.2),
+      size: Size(ss.width * 0.5, ss.height * 0.6),
+      imagePath: imagePath,
+      zIndex: state.activeSlide.elements.length,
+    ));
+  }
+
+  void insertTextBox() {
+    final ss = state.presentation.settings.slideSize;
+    addElement(TextElement(
+      id: _uuid.v4(),
+      position: Offset(ss.width * 0.1, ss.height * 0.4),
+      size: Size(ss.width * 0.8, 60),
+      zIndex: state.activeSlide.elements.length,
+      paragraphs: const [RichParagraph(runs: [TextRun(text: 'Text Box')])],
+    ));
+  }
+
+  // ── Slide management ────────────────────────────────────────────────────────
+
+  void reorderSlides(int oldIndex, int newIndex) {
+    final slides = List<Slide>.from(state.presentation.slides);
+    if (newIndex > oldIndex) newIndex--;
+    final moved = slides.removeAt(oldIndex);
+    slides.insert(newIndex, moved);
+
+    int active = state.presentation.activeSlideIndex;
+    if (active == oldIndex) {
+      active = newIndex;
+    } else if (oldIndex < active && newIndex >= active) {
+      active--;
+    } else if (oldIndex > active && newIndex <= active) {
+      active++;
+    }
+    _updatePresentation(state.presentation.copyWith(slides: slides, activeSlideIndex: active));
+  }
+
+  void updateSlideNotes(String notes) {
+    _updateSlide(state.activeSlide.copyWith(notes: notes));
+  }
+
+  void toggleElementLock(String id) {
+    final el = state.activeSlide.elements.firstWhere((e) => e.id == id);
+    updateElement(el.copyWith(isLocked: !el.isLocked));
+  }
+
+  void toggleElementVisibility(String id) {
+    final el = state.activeSlide.elements.firstWhere((e) => e.id == id);
+    updateElement(el.copyWith(hidden: !el.hidden));
+  }
 }

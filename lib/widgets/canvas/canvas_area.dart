@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:uuid/uuid.dart';
 import '../../cubit/editor_cubit.dart';
 import '../../models/elements.dart';
 import '../../models/table.dart';
@@ -11,6 +12,9 @@ import '../text/rich_text_editor.dart';
 import '../shapes/shape_renderer.dart';
 import '../tables/table_widget.dart';
 import '../shapes/selection_handles.dart';
+import '../../engine/charts/advanced_charts.dart';
+
+const _uuid = Uuid();
 
 class CanvasArea extends StatelessWidget {
   final double zoom;
@@ -32,9 +36,7 @@ class CanvasArea extends StatelessWidget {
         child: Center(
           child: GestureDetector(
             onTapDown: (details) {
-              final box = context.findRenderObject() as RenderBox;
-              final localPos = box.globalToLocal(details.globalPosition);
-              _handleCanvasTap(context, localPos, state.activeTool);
+              _handleCanvasTap(context, details.localPosition, state.activeTool);
             },
             child: Container(
               width: settings.slideSize.width,
@@ -62,13 +64,12 @@ class CanvasArea extends StatelessWidget {
 
   void _handleCanvasTap(BuildContext context, Offset position, Tool tool) {
     final cubit = context.read<EditorCubit>();
-    final uuid = DateTime.now().millisecondsSinceEpoch.toString();
 
     switch (tool) {
       case Tool.textBox:
         cubit.addElement(
           TextElement(
-            id: 'text_$uuid',
+            id: _uuid.v4(),
             position: position,
             size: const Size(300, 60),
             zIndex: cubit.state.activeSlide.elements.length,
@@ -82,7 +83,7 @@ class CanvasArea extends StatelessWidget {
       case Tool.rectangle:
         cubit.addElement(
           ShapeElement(
-            id: 'shape_$uuid',
+            id: _uuid.v4(),
             position: position,
             size: const Size(200, 150),
             zIndex: cubit.state.activeSlide.elements.length,
@@ -91,10 +92,35 @@ class CanvasArea extends StatelessWidget {
         );
         cubit.setTool(Tool.select);
         break;
+      case Tool.roundedRectangle:
+        cubit.addElement(
+          ShapeElement(
+            id: _uuid.v4(),
+            position: position,
+            size: const Size(200, 150),
+            zIndex: cubit.state.activeSlide.elements.length,
+            shapeType: ShapeType.roundedRectangle,
+            cornerRadius: 16,
+          ),
+        );
+        cubit.setTool(Tool.select);
+        break;
+      case Tool.diamond:
+        cubit.addElement(
+          ShapeElement(
+            id: _uuid.v4(),
+            position: position,
+            size: const Size(150, 150),
+            zIndex: cubit.state.activeSlide.elements.length,
+            shapeType: ShapeType.diamond,
+          ),
+        );
+        cubit.setTool(Tool.select);
+        break;
       case Tool.circle:
         cubit.addElement(
           ShapeElement(
-            id: 'shape_$uuid',
+            id: _uuid.v4(),
             position: position,
             size: const Size(150, 150),
             zIndex: cubit.state.activeSlide.elements.length,
@@ -106,7 +132,7 @@ class CanvasArea extends StatelessWidget {
       case Tool.triangle:
         cubit.addElement(
           ShapeElement(
-            id: 'shape_$uuid',
+            id: _uuid.v4(),
             position: position,
             size: const Size(150, 150),
             zIndex: cubit.state.activeSlide.elements.length,
@@ -118,7 +144,7 @@ class CanvasArea extends StatelessWidget {
       case Tool.star:
         cubit.addElement(
           ShapeElement(
-            id: 'shape_$uuid',
+            id: _uuid.v4(),
             position: position,
             size: const Size(150, 150),
             zIndex: cubit.state.activeSlide.elements.length,
@@ -130,7 +156,7 @@ class CanvasArea extends StatelessWidget {
       case Tool.arrow:
         cubit.addElement(
           ShapeElement(
-            id: 'shape_$uuid',
+            id: _uuid.v4(),
             position: position,
             size: const Size(200, 60),
             zIndex: cubit.state.activeSlide.elements.length,
@@ -213,13 +239,15 @@ class _ElementRenderer extends StatelessWidget {
                 ),
               if (isSelected || isMultiSelected)
                 Positioned.fill(
-                  child: Container(
-                    decoration: BoxDecoration(
-                      border: Border.all(
-                        color: isSelected
-                            ? const Color(0xFF4472C4)
-                            : const Color(0xFFFFA500),
-                        width: 2,
+                  child: IgnorePointer(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        border: Border.all(
+                          color: isSelected
+                              ? const Color(0xFF4472C4)
+                              : const Color(0xFFFFA500),
+                          width: 2,
+                        ),
                       ),
                     ),
                   ),
@@ -262,7 +290,7 @@ class _TextElementRendererState extends State<_TextElementRenderer> {
     }
 
     return GestureDetector(
-      onDoubleTap: widget.isSelected
+      onTap: widget.isSelected
           ? () => setState(() => _isEditing = true)
           : null,
       child: Container(
@@ -344,52 +372,48 @@ class _ChartPlaceholder extends StatelessWidget {
   final ChartElement element;
   const _ChartPlaceholder({required this.element});
 
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      color: element.style.backgroundColor,
-      child: CustomPaint(
-        size: element.size,
-        painter: _ChartPainter(element: element),
-      ),
-    );
-  }
-}
-
-class _ChartPainter extends CustomPainter {
-  final ChartElement element;
-  _ChartPainter({required this.element});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final data = element.data;
-    if (data.series.isEmpty) return;
-
-    final paint = Paint()..strokeWidth = 2;
-    final maxVal = data.series
-        .expand((s) => s.values)
-        .reduce((a, b) => a > b ? a : b);
-    final barWidth =
-        size.width /
-        (data.categories.length * data.series.length +
-            data.categories.length +
-            1);
-
-    for (int i = 0; i < data.categories.length; i++) {
-      for (int j = 0; j < data.series.length; j++) {
-        final value = data.series[j].values[i];
-        final barHeight = (value / maxVal) * size.height * 0.8;
-        final x = (i * (data.series.length + 1) + j + 1) * barWidth;
-        final y = size.height - barHeight;
-
-        paint.color = data.series[j].color;
-        canvas.drawRect(Rect.fromLTWH(x, y, barWidth * 0.9, barHeight), paint);
-      }
+  AdvancedChartType _mapType(ChartType t) {
+    switch (t) {
+      case ChartType.bar: return AdvancedChartType.barClustered;
+      case ChartType.line: return AdvancedChartType.line;
+      case ChartType.pie: return AdvancedChartType.pie;
+      case ChartType.area: return AdvancedChartType.area;
+      case ChartType.scatter: return AdvancedChartType.scatter;
+      case ChartType.radar: return AdvancedChartType.radar;
+      default: return AdvancedChartType.columnClustered;
     }
   }
 
+  ChartDataTable _toDataTable(ChartData data) {
+    final rows = data.series.map((s) => s.values).toList();
+    return ChartDataTable(
+      rowHeaders: data.series.map((s) => s.name).toList(),
+      columnHeaders: data.categories,
+      data: rows,
+      seriesColors: data.series.map((s) => s.color).toList(),
+    );
+  }
+
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+  Widget build(BuildContext context) {
+    final dataTable = _toDataTable(element.data);
+    if (dataTable.data.isEmpty || dataTable.columnHeaders.isEmpty) {
+      return Container(
+        color: element.style.backgroundColor,
+        child: const Center(child: Icon(Icons.bar_chart, color: Colors.grey, size: 48)),
+      );
+    }
+    return Container(
+      color: element.style.backgroundColor,
+      child: AdvancedChartRenderer(
+        type: _mapType(element.type),
+        data: dataTable,
+        size: element.size,
+        showLegend: element.hasLegend,
+        title: element.hasTitle ? element.title : null,
+      ),
+    );
+  }
 }
 
 class _GroupElementRenderer extends StatelessWidget {
