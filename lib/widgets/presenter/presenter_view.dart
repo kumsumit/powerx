@@ -11,6 +11,7 @@ import '../../models/chart.dart';
 import '../shapes/shape_renderer.dart';
 import '../tables/table_widget.dart';
 import '../../engine/charts/advanced_charts.dart';
+import '../slide_background.dart';
 
 class PresenterView extends StatefulWidget {
   final Presentation presentation;
@@ -100,12 +101,12 @@ class _PresenterViewState extends State<PresenterView> {
                         aspectRatio: 16 / 9,
                         child: FittedBox(
                           fit: BoxFit.contain,
-                          child: Container(
+                          child: SlideBackground(
                             width: widget.presentation.settings.slideSize.width,
                             height:
                                 widget.presentation.settings.slideSize.height,
-                            color:
-                                slide.backgroundColorOverride ?? Colors.white,
+                            color: slide.backgroundColorOverride,
+                            fill: slide.backgroundFillOverride,
                             child: Stack(
                               children: slide.elements
                                   .map((e) => _buildElement(e))
@@ -205,11 +206,11 @@ class _PresenterViewState extends State<PresenterView> {
                       aspectRatio: 16 / 9,
                       child: FittedBox(
                         fit: BoxFit.contain,
-                        child: Container(
+                        child: SlideBackground(
                           width: widget.presentation.settings.slideSize.width,
                           height: widget.presentation.settings.slideSize.height,
-                          color:
-                              nextSlide.backgroundColorOverride ?? Colors.white,
+                          color: nextSlide.backgroundColorOverride,
+                          fill: nextSlide.backgroundFillOverride,
                           child: Stack(
                             children: nextSlide.elements
                                 .map((e) => _buildElement(e))

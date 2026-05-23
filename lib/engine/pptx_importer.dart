@@ -4,6 +4,7 @@ import 'package:archive/archive.dart';
 import 'package:xml/xml.dart';
 import 'package:uuid/uuid.dart';
 import '../models/presentation.dart';
+import '../models/slide_master.dart';
 import '../models/elements.dart';
 import '../models/text_styles.dart';
 import '../models/table.dart';
@@ -80,9 +81,7 @@ class PptxImporter {
     return Presentation(
       id: _uuid.v4(),
       title: 'Imported Presentation',
-      slides: slides.isEmpty
-          ? [Slide(id: _uuid.v4(), slideNumber: 1)]
-          : slides,
+      slides: slides.isEmpty ? [Slide(id: _uuid.v4(), slideNumber: 1)] : slides,
       theme: firstTheme,
       settings: PresentationSettings(slideSize: slideSize),
       filePath: filePath,
@@ -325,10 +324,11 @@ class PptxImporter {
       }
     }
 
-    final bgColor =
-        _backgroundColor(cSld, scheme) ??
+    final bgFill =
+        _backgroundFill(cSld, scheme) ??
         (layout != null ? _resolveBg(layout.bg, scheme) : null) ??
         (master != null ? _resolveBg(master.bg, scheme) : null);
+    final bgColor = _backgroundColorFromFill(bgFill);
 
     final transitionEl = OpenXmlUtils.findChild(root, 'transition');
     SlideTransition? transition;
@@ -346,24 +346,59 @@ class PptxImporter {
       id: _uuid.v4(),
       elements: elements,
       backgroundColorOverride: bgColor,
+      backgroundFillOverride: bgFill,
       transition: transition ?? const SlideTransition(),
       slideNumber: slideNumber,
     );
   }
 
-  Color? _backgroundColor(XmlElement? cSld, ColorScheme scheme) {
+  BackgroundFill? _backgroundFill(XmlElement? cSld, ColorScheme scheme) {
     return _resolveBg(OpenXmlUtils.findChild(cSld, 'bg'), scheme);
   }
 
-  Color? _resolveBg(XmlElement? bg, ColorScheme scheme) {
+  Color? _backgroundColorFromFill(BackgroundFill? fill) {
+    if (fill == null) return null;
+    if (fill.solidColor != null) return fill.solidColor;
+    final stops = fill.gradient?.stops;
+    if (stops != null && stops.isNotEmpty) return stops.first.color;
+    return null;
+  }
+
+  BackgroundFill? _resolveBg(XmlElement? bg, ColorScheme scheme) {
     if (bg == null) return null;
     final bgPr = OpenXmlUtils.findChild(bg, 'bgPr');
     final solid = OpenXmlUtils.findChild(bgPr, 'solidFill');
-    if (solid != null) return OpenXmlUtils.colorIn(solid, scheme: scheme);
+    if (solid != null) {
+      final color = OpenXmlUtils.colorIn(solid, scheme: scheme);
+      if (color != null) {
+        return BackgroundFill(
+          type: BackgroundFillType.solid,
+          solidColor: color,
+        );
+      }
+    }
+    final gradient = _parseGradientFill(
+      OpenXmlUtils.findChild(bgPr, 'gradFill'),
+      scheme,
+    );
+    if (gradient != null) {
+      return BackgroundFill(
+        type: BackgroundFillType.gradient,
+        gradient: gradient,
+      );
+    }
     // bgRef points into the theme's background fill styles; approximate with
     // its color child.
     final bgRef = OpenXmlUtils.findChild(bg, 'bgRef');
-    if (bgRef != null) return OpenXmlUtils.colorIn(bgRef, scheme: scheme);
+    if (bgRef != null) {
+      final color = OpenXmlUtils.colorIn(bgRef, scheme: scheme);
+      if (color != null) {
+        return BackgroundFill(
+          type: BackgroundFillType.solid,
+          solidColor: color,
+        );
+      }
+    }
     return null;
   }
 
@@ -407,8 +442,13 @@ class PptxImporter {
     final id = OpenXmlUtils.attr(cNvPr, 'id') ?? _uuid.v4();
 
     // Placeholder linkage to the layout/master.
-    final ph = OpenXmlUtils.findChild(OpenXmlUtils.findChild(nvSpPr, 'nvPr'), 'ph');
-    final phType = ph != null ? (OpenXmlUtils.attr(ph, 'type') ?? 'body') : null;
+    final ph = OpenXmlUtils.findChild(
+      OpenXmlUtils.findChild(nvSpPr, 'nvPr'),
+      'ph',
+    );
+    final phType = ph != null
+        ? (OpenXmlUtils.attr(ph, 'type') ?? 'body')
+        : null;
     final phIdx = ph != null ? (OpenXmlUtils.attr(ph, 'idx') ?? '') : '';
 
     final spPr = OpenXmlUtils.findChild(sp, 'spPr');
@@ -426,17 +466,21 @@ class PptxImporter {
           : null;
     }
 
-    final off =
-        xfrm.off ?? layoutPh?.off ?? masterPh?.off ?? Offset.zero;
+    final off = xfrm.off ?? layoutPh?.off ?? masterPh?.off ?? Offset.zero;
     final size =
         xfrm.ext ?? layoutPh?.size ?? masterPh?.size ?? const Size(100, 100);
     final rot = xfrm.rot;
 
     final fill = _resolveFill(sp, spPr, scheme);
     final stroke = _resolveStroke(spPr, scheme);
-    final shapeType = _shapeType(
-      OpenXmlUtils.attr(OpenXmlUtils.findChild(spPr, 'prstGeom'), 'prst'),
+    final customGeometry = _parseCustomGeometry(
+      OpenXmlUtils.findChild(spPr, 'custGeom'),
     );
+    final shapeType = customGeometry != null
+        ? ShapeType.custom
+        : _shapeType(
+            OpenXmlUtils.attr(OpenXmlUtils.findChild(spPr, 'prstGeom'), 'prst'),
+          );
 
     final txBody = OpenXmlUtils.findChild(sp, 'txBody');
     if (txBody != null) {
@@ -453,18 +497,20 @@ class PptxImporter {
       final hasText = paragraphs.any((p) => p.plainText.trim().isNotEmpty);
       // Skip empty inherited prompt placeholders so they don't render as boxes.
       if (!hasText && ph != null && _isEmptyTxBody(txBody)) return null;
-      return TextElement(
-        id: id,
-        name: name,
-        position: off,
-        size: size,
-        rotation: rot,
-        paragraphs: paragraphs,
-        fillColor: fill,
-        borderWidth: stroke?.width,
-        borderColor: stroke?.color,
-        zIndex: 0,
-      );
+      if (hasText) {
+        return TextElement(
+          id: id,
+          name: name,
+          position: off,
+          size: size,
+          rotation: rot,
+          paragraphs: paragraphs,
+          fillColor: fill,
+          borderWidth: stroke?.width,
+          borderColor: stroke?.color,
+          zIndex: 0,
+        );
+      }
     }
 
     return ShapeElement(
@@ -476,10 +522,13 @@ class PptxImporter {
       fillColor: fill ?? const Color(0x00000000),
       gradientStart: _gradient(spPr, scheme)?.$1,
       gradientEnd: _gradient(spPr, scheme)?.$2,
-      gradientType: _gradient(spPr, scheme) != null ? GradientType.linear : null,
+      gradientType: _gradient(spPr, scheme) != null
+          ? GradientType.linear
+          : null,
       strokeColor: stroke?.color ?? const Color(0xFF000000),
       strokeWidth: stroke?.width ?? 0,
       shapeType: shapeType,
+      customGeometry: customGeometry,
       flipHorizontal: xfrm.flipH,
       flipVertical: xfrm.flipV,
       zIndex: 0,
@@ -537,15 +586,39 @@ class PptxImporter {
   }
 
   (Color, Color)? _gradient(XmlElement? spPr, ColorScheme scheme) {
-    final grad = OpenXmlUtils.findChild(spPr, 'gradFill');
+    final gradient = _parseGradientFill(
+      OpenXmlUtils.findChild(spPr, 'gradFill'),
+      scheme,
+    );
+    if (gradient == null || gradient.stops.length < 2) return null;
+    return (gradient.stops.first.color, gradient.stops.last.color);
+  }
+
+  GradientFill? _parseGradientFill(XmlElement? grad, ColorScheme scheme) {
     if (grad == null) return null;
     final gsLst = OpenXmlUtils.findChild(grad, 'gsLst');
-    final stops = OpenXmlUtils.findChildren(gsLst, 'gs');
+    final stops =
+        OpenXmlUtils.findChildren(gsLst, 'gs')
+            .map((gs) {
+              final color = OpenXmlUtils.colorIn(gs, scheme: scheme);
+              if (color == null) return null;
+              final position =
+                  (int.tryParse(OpenXmlUtils.attr(gs, 'pos') ?? '') ?? 0) /
+                  100000.0;
+              return ColorStop(
+                color: color,
+                position: position.clamp(0.0, 1.0),
+              );
+            })
+            .whereType<ColorStop>()
+            .toList()
+          ..sort((a, b) => a.position.compareTo(b.position));
+
     if (stops.length < 2) return null;
-    final start = OpenXmlUtils.colorIn(stops.first, scheme: scheme);
-    final end = OpenXmlUtils.colorIn(stops.last, scheme: scheme);
-    if (start == null || end == null) return null;
-    return (start, end);
+    final lin = OpenXmlUtils.findChild(grad, 'lin');
+    final angle =
+        (int.tryParse(OpenXmlUtils.attr(lin, 'ang') ?? '0') ?? 0) / 60000.0;
+    return GradientFill(stops: stops, angle: angle);
   }
 
   // ---------------------------------------------------------------------------
@@ -695,7 +768,8 @@ class PptxImporter {
       if (m == null) continue;
       final level = (int.parse(m.group(1)!) - 1).clamp(0, 8);
       final defRPr = OpenXmlUtils.findChild(child, 'defRPr');
-      final ls = _LevelStyle()..align = _align(OpenXmlUtils.attr(child, 'algn'));
+      final ls = _LevelStyle()
+        ..align = _align(OpenXmlUtils.attr(child, 'algn'));
       if (defRPr != null) {
         final sz = OpenXmlUtils.attr(defRPr, 'sz');
         if (sz != null) ls.size = (int.tryParse(sz) ?? 1800) / 100.0;
@@ -809,6 +883,7 @@ class PptxImporter {
       OpenXmlUtils.findChild(pic, 'blipFill'),
       'blip',
     );
+    final opacity = _pictureOpacity(blip);
     final embedId = OpenXmlUtils.attr(blip, 'embed', nsPrefix: 'r');
     String? imagePath;
     if (embedId != null) {
@@ -823,8 +898,33 @@ class PptxImporter {
       size: xfrm.ext ?? const Size(100, 100),
       rotation: xfrm.rot,
       imagePath: imagePath ?? '',
+      opacity: opacity,
       zIndex: 0,
     );
+  }
+
+  double _pictureOpacity(XmlElement? blip) {
+    if (blip == null) return 1.0;
+    final values = <double>[];
+    for (final child in blip.childElements) {
+      switch (child.name.local) {
+        case 'alphaModFix':
+        case 'alphaMod':
+          final amt = OpenXmlUtils.attr(child, 'amt');
+          if (amt != null) {
+            values.add(((int.tryParse(amt) ?? 100000) / 100000.0).clamp(0, 1));
+          }
+          break;
+        case 'alpha':
+          final val = OpenXmlUtils.attr(child, 'val');
+          if (val != null) {
+            values.add(((int.tryParse(val) ?? 100000) / 100000.0).clamp(0, 1));
+          }
+          break;
+      }
+    }
+    if (values.isEmpty) return 1.0;
+    return values.reduce((a, b) => a * b);
   }
 
   SlideElement? _parseGroup(
@@ -985,9 +1085,9 @@ class PptxImporter {
           series.add(
             ChartSeries(
               name: _seriesName(ser, i),
-              values: _readRefValues(OpenXmlUtils.findChild(ser, 'val'))
-                  .map((v) => double.tryParse(v) ?? 0)
-                  .toList(),
+              values: _readRefValues(
+                OpenXmlUtils.findChild(ser, 'val'),
+              ).map((v) => double.tryParse(v) ?? 0).toList(),
               color: _seriesColor(ser, scheme) ?? accents[i % accents.length],
             ),
           );
@@ -1023,7 +1123,10 @@ class PptxImporter {
     switch (local) {
       case 'barChart':
       case 'bar3DChart':
-        final dir = OpenXmlUtils.attr(OpenXmlUtils.findChild(el, 'barDir'), 'val');
+        final dir = OpenXmlUtils.attr(
+          OpenXmlUtils.findChild(el, 'barDir'),
+          'val',
+        );
         return dir == 'bar' ? ChartType.bar : ChartType.column;
       case 'lineChart':
       case 'line3DChart':
@@ -1156,10 +1259,7 @@ class PptxImporter {
       final h = OpenXmlUtils.attr(tr, 'h');
       final rowId = _uuid.v4();
       rows.add(
-        TableRow(
-          id: rowId,
-          height: h != null ? OpenXmlUtils.parseEmuD(h) : 30,
-        ),
+        TableRow(id: rowId, height: h != null ? OpenXmlUtils.parseEmuD(h) : 30),
       );
       var colIdx = 0;
       for (final tc in OpenXmlUtils.findChildren(tr, 'tc')) {
@@ -1246,6 +1346,8 @@ class PptxImporter {
         return ShapeType.hexagon;
       case 'star5':
         return ShapeType.star;
+      case 'donut':
+        return ShapeType.donut;
       case 'rightArrow':
       case 'leftArrow':
       case 'arrow':
@@ -1253,6 +1355,85 @@ class PptxImporter {
       default:
         return ShapeType.rectangle;
     }
+  }
+
+  CustomGeometry? _parseCustomGeometry(XmlElement? custGeom) {
+    final pathLst = OpenXmlUtils.findChild(custGeom, 'pathLst');
+    if (pathLst == null) return null;
+
+    final paths = <CustomGeometryPath>[];
+    for (final pathEl in OpenXmlUtils.findChildren(pathLst, 'path')) {
+      final w = double.tryParse(OpenXmlUtils.attr(pathEl, 'w') ?? '') ?? 0;
+      final h = double.tryParse(OpenXmlUtils.attr(pathEl, 'h') ?? '') ?? 0;
+      final commands = <CustomPathCommand>[];
+
+      for (final commandEl in pathEl.childElements) {
+        switch (commandEl.name.local) {
+          case 'moveTo':
+            final point = _parsePathPoint(
+              OpenXmlUtils.findChild(commandEl, 'pt'),
+            );
+            if (point != null) {
+              commands.add(
+                CustomPathCommand(
+                  type: CustomPathCommandType.moveTo,
+                  point: point,
+                ),
+              );
+            }
+            break;
+          case 'lnTo':
+            final point = _parsePathPoint(
+              OpenXmlUtils.findChild(commandEl, 'pt'),
+            );
+            if (point != null) {
+              commands.add(
+                CustomPathCommand(
+                  type: CustomPathCommandType.lineTo,
+                  point: point,
+                ),
+              );
+            }
+            break;
+          case 'cubicBezTo':
+            final points = OpenXmlUtils.findChildren(
+              commandEl,
+              'pt',
+            ).map(_parsePathPoint).whereType<Offset>().toList();
+            if (points.length == 3) {
+              commands.add(
+                CustomPathCommand(
+                  type: CustomPathCommandType.cubicTo,
+                  control1: points[0],
+                  control2: points[1],
+                  point: points[2],
+                ),
+              );
+            }
+            break;
+          case 'close':
+            commands.add(
+              const CustomPathCommand(type: CustomPathCommandType.close),
+            );
+            break;
+        }
+      }
+
+      if (w > 0 && h > 0 && commands.isNotEmpty) {
+        paths.add(CustomGeometryPath(size: Size(w, h), commands: commands));
+      }
+    }
+
+    if (paths.isEmpty) return null;
+    return CustomGeometry(paths: paths);
+  }
+
+  Offset? _parsePathPoint(XmlElement? pt) {
+    if (pt == null) return null;
+    final x = double.tryParse(OpenXmlUtils.attr(pt, 'x') ?? '');
+    final y = double.tryParse(OpenXmlUtils.attr(pt, 'y') ?? '');
+    if (x == null || y == null) return null;
+    return Offset(x, y);
   }
 
   String? _transitionChildName(XmlElement transition) {

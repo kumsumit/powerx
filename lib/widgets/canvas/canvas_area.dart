@@ -16,6 +16,7 @@ import '../tables/table_widget.dart';
 import '../shapes/selection_handles.dart';
 import '../../engine/charts/advanced_charts.dart';
 import '../ink/ink_canvas.dart';
+import '../slide_background.dart';
 
 const _uuid = Uuid();
 
@@ -100,12 +101,11 @@ class _CanvasAreaState extends State<CanvasArea> {
                                   state.activeTool,
                                 );
                               },
-                              child: Container(
+                              child: SlideBackground(
                                 width: slideSize.width,
                                 height: slideSize.height,
-                                color:
-                                    slide.backgroundColorOverride ??
-                                    const Color(0xFFFFFFFF),
+                                color: slide.backgroundColorOverride,
+                                fill: slide.backgroundFillOverride,
                                 child: Stack(
                                   clipBehavior: Clip.none,
                                   children: [
@@ -485,12 +485,14 @@ class _ImageElementRenderer extends StatelessWidget {
         height: element.size.height,
       );
     }
-    return Image.file(
+    final image = Image.file(
       imageFile,
       fit: _mapFillMode(element.fillMode),
       width: element.size.width,
       height: element.size.height,
     );
+    if (element.opacity >= 1) return image;
+    return Opacity(opacity: element.opacity, child: image);
   }
 
   BoxFit _mapFillMode(ImageFillMode mode) {

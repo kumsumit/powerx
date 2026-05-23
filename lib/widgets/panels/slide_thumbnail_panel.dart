@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../cubit/editor_cubit.dart';
 import '../../models/elements.dart';
+import '../slide_background.dart';
 
 class SlideThumbnailPanel extends StatelessWidget {
   const SlideThumbnailPanel({super.key});
@@ -58,7 +59,10 @@ class SlideThumbnailPanel extends StatelessWidget {
 
                 return Container(
                   key: ValueKey(slide.id),
-                  margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                  margin: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 6,
+                  ),
                   child: Row(
                     children: [
                       // Left drag handle and index
@@ -74,14 +78,18 @@ class SlideThumbnailPanel extends StatelessWidget {
                                 style: TextStyle(
                                   fontSize: 11,
                                   fontWeight: FontWeight.bold,
-                                  color: isActive ? const Color(0xFFB7472A) : Colors.grey.shade600,
+                                  color: isActive
+                                      ? const Color(0xFFB7472A)
+                                      : Colors.grey.shade600,
                                 ),
                               ),
                               const SizedBox(height: 2),
                               Icon(
                                 Icons.drag_indicator,
                                 size: 14,
-                                color: isActive ? const Color(0xFFB7472A) : Colors.grey.shade400,
+                                color: isActive
+                                    ? const Color(0xFFB7472A)
+                                    : Colors.grey.shade400,
                               ),
                             ],
                           ),
@@ -95,14 +103,18 @@ class SlideThumbnailPanel extends StatelessWidget {
                           child: Container(
                             decoration: BoxDecoration(
                               border: Border.all(
-                                color: isActive ? const Color(0xFFB7472A) : Colors.grey.shade300,
+                                color: isActive
+                                    ? const Color(0xFFB7472A)
+                                    : Colors.grey.shade300,
                                 width: isActive ? 2 : 1,
                               ),
                               borderRadius: BorderRadius.circular(6),
                               boxShadow: isActive
                                   ? [
                                       BoxShadow(
-                                        color: const Color(0xFFB7472A).withOpacity(0.15),
+                                        color: const Color(
+                                          0xFFB7472A,
+                                        ).withOpacity(0.15),
                                         blurRadius: 6,
                                         offset: const Offset(0, 3),
                                       ),
@@ -119,42 +131,53 @@ class SlideThumbnailPanel extends StatelessWidget {
                               aspectRatio: 16 / 9,
                               child: ClipRRect(
                                 borderRadius: BorderRadius.circular(4),
-                                  child: Container(
-                                    color: slide.backgroundColorOverride ?? Colors.white,
-                                    child: LayoutBuilder(
-                                      builder: (context, constraints) {
-                                        final slideSize = state.presentation.settings.slideSize;
-                                        final scaleX = constraints.maxWidth / slideSize.width;
-                                        final scaleY = constraints.maxHeight / slideSize.height;
-                                        final avgScale = (scaleX + scaleY) / 2;
+                                child: SlideBackground(
+                                  color: slide.backgroundColorOverride,
+                                  fill: slide.backgroundFillOverride,
+                                  child: LayoutBuilder(
+                                    builder: (context, constraints) {
+                                      final slideSize =
+                                          state.presentation.settings.slideSize;
+                                      final scaleX =
+                                          constraints.maxWidth /
+                                          slideSize.width;
+                                      final scaleY =
+                                          constraints.maxHeight /
+                                          slideSize.height;
+                                      final avgScale = (scaleX + scaleY) / 2;
 
-                                        return Stack(
-                                          children: [
-                                            ...slide.elements.map((e) {
-                                              return Positioned(
-                                                left: e.position.dx * scaleX,
-                                                top: e.position.dy * scaleY,
-                                                width: e.size.width * scaleX,
-                                                height: e.size.height * scaleY,
-                                                child: _buildMiniElement(e, avgScale),
-                                              );
-                                            }),
-                                            if (slide.hidden)
-                                              Container(
-                                                color: Colors.black.withOpacity(0.3),
-                                                child: const Center(
-                                                  child: Icon(
-                                                    Icons.visibility_off,
-                                                    color: Colors.white,
-                                                    size: 16,
-                                                  ),
+                                      return Stack(
+                                        children: [
+                                          ...slide.elements.map((e) {
+                                            return Positioned(
+                                              left: e.position.dx * scaleX,
+                                              top: e.position.dy * scaleY,
+                                              width: e.size.width * scaleX,
+                                              height: e.size.height * scaleY,
+                                              child: _buildMiniElement(
+                                                e,
+                                                avgScale,
+                                              ),
+                                            );
+                                          }),
+                                          if (slide.hidden)
+                                            Container(
+                                              color: Colors.black.withOpacity(
+                                                0.3,
+                                              ),
+                                              child: const Center(
+                                                child: Icon(
+                                                  Icons.visibility_off,
+                                                  color: Colors.white,
+                                                  size: 16,
                                                 ),
                                               ),
-                                          ],
-                                        );
-                                      },
-                                    ),
+                                            ),
+                                        ],
+                                      );
+                                    },
                                   ),
+                                ),
                               ),
                             ),
                           ),
@@ -180,7 +203,8 @@ class SlideThumbnailPanel extends StatelessWidget {
           style: TextStyle(
             fontSize:
                 ((e.paragraphs.firstOrNull?.runs.firstOrNull?.fontSize ?? 18) *
-                 scale).clamp(2.0, 100.0),
+                        scale)
+                    .clamp(2.0, 100.0),
           ),
           overflow: TextOverflow.ellipsis,
           maxLines: 2,
@@ -191,7 +215,10 @@ class SlideThumbnailPanel extends StatelessWidget {
         decoration: BoxDecoration(
           color: e.fillColor,
           border: e.strokeWidth > 0
-              ? Border.all(color: e.strokeColor, width: (e.strokeWidth * scale).clamp(0.1, 10.0))
+              ? Border.all(
+                  color: e.strokeColor,
+                  width: (e.strokeWidth * scale).clamp(0.1, 10.0),
+                )
               : null,
           borderRadius: e.shapeType == ShapeType.circle
               ? BorderRadius.circular(e.size.width * scale / 2)
@@ -242,11 +269,7 @@ class _PanelActionButton extends StatelessWidget {
           borderRadius: BorderRadius.circular(8),
           child: Padding(
             padding: const EdgeInsets.all(8.0),
-            child: Icon(
-              icon,
-              size: 20,
-              color: color,
-            ),
+            child: Icon(icon, size: 20, color: color),
           ),
         ),
       ),

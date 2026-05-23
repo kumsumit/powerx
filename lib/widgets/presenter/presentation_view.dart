@@ -13,6 +13,7 @@ import '../../engine/charts/advanced_charts.dart';
 import '../animations/animation_engine.dart';
 import '../ink/ink_canvas.dart';
 import '../text/rich_paragraphs_view.dart';
+import '../slide_background.dart';
 
 class PresentationView extends StatefulWidget {
   final Presentation presentation;
@@ -248,11 +249,11 @@ class _PresentationViewState extends State<PresentationView>
                         animation: _transitionAnimation,
                         child: FittedBox(
                           fit: BoxFit.contain,
-                          child: Container(
+                          child: SlideBackground(
                             width: slideSize.width,
                             height: slideSize.height,
-                            color:
-                                slide.backgroundColorOverride ?? Colors.white,
+                            color: slide.backgroundColorOverride,
+                            fill: slide.backgroundFillOverride,
                             child: Stack(
                               children: [
                                 // Slide elements
@@ -553,9 +554,9 @@ class _PresentationViewState extends State<PresentationView>
                       child: Stack(
                         children: [
                           Positioned.fill(
-                            child: Container(
-                              color:
-                                  slide.backgroundColorOverride ?? Colors.white,
+                            child: SlideBackground(
+                              color: slide.backgroundColorOverride,
+                              fill: slide.backgroundFillOverride,
                               child: Stack(
                                 children: slide.elements.map((e) {
                                   // Draw tiny elements for picker

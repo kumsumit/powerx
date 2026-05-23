@@ -38,8 +38,12 @@ class ShapeRenderer extends StatelessWidget {
       case ShapeType.arrow:
         content = _buildArrow();
         break;
-      default:
-        content = _buildRect();
+      case ShapeType.donut:
+        content = _buildDonut();
+        break;
+      case ShapeType.custom:
+        content = _buildCustomGeometry();
+        break;
     }
 
     if (shape.flipHorizontal || shape.flipVertical) {
@@ -62,9 +66,7 @@ class ShapeRenderer extends StatelessWidget {
       decoration: BoxDecoration(
         color: shape.fillColor,
         gradient: shape.gradientStart != null && shape.gradientEnd != null
-            ? LinearGradient(
-                colors: [shape.gradientStart!, shape.gradientEnd!],
-              )
+            ? LinearGradient(colors: [shape.gradientStart!, shape.gradientEnd!])
             : null,
         border: shape.strokeWidth > 0
             ? Border.all(color: shape.strokeColor, width: shape.strokeWidth)
@@ -73,7 +75,10 @@ class ShapeRenderer extends StatelessWidget {
             ? [
                 BoxShadow(
                   color: shape.shadow!.color,
-                  offset: Offset(shape.shadow!.offset.dx, shape.shadow!.offset.dy),
+                  offset: Offset(
+                    shape.shadow!.offset.dx,
+                    shape.shadow!.offset.dy,
+                  ),
                   blurRadius: shape.shadow!.blurRadius,
                 ),
               ]
@@ -86,7 +91,9 @@ class ShapeRenderer extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: shape.fillColor,
-        borderRadius: BorderRadius.circular(shape.cornerRadius ?? min(shape.size.width, shape.size.height) * 0.1),
+        borderRadius: BorderRadius.circular(
+          shape.cornerRadius ?? min(shape.size.width, shape.size.height) * 0.1,
+        ),
         border: shape.strokeWidth > 0
             ? Border.all(color: shape.strokeColor, width: shape.strokeWidth)
             : null,
@@ -167,6 +174,175 @@ class ShapeRenderer extends StatelessWidget {
       ),
     );
   }
+
+  Widget _buildDonut() {
+    return CustomPaint(
+      size: shape.size,
+      painter: _DonutPainter(
+        fillColor: shape.fillColor,
+        gradientStart: shape.gradientStart,
+        gradientEnd: shape.gradientEnd,
+        strokeColor: shape.strokeColor,
+        strokeWidth: shape.strokeWidth,
+      ),
+    );
+  }
+
+  Widget _buildCustomGeometry() {
+    final geometry = shape.customGeometry;
+    if (geometry == null) return _buildRect();
+    return CustomPaint(
+      size: shape.size,
+      painter: _CustomGeometryPainter(
+        geometry: geometry,
+        fillColor: shape.fillColor,
+        strokeColor: shape.strokeColor,
+        strokeWidth: shape.strokeWidth,
+      ),
+    );
+  }
+}
+
+class _CustomGeometryPainter extends CustomPainter {
+  final CustomGeometry geometry;
+  final Color fillColor;
+  final Color strokeColor;
+  final double strokeWidth;
+
+  _CustomGeometryPainter({
+    required this.geometry,
+    required this.fillColor,
+    required this.strokeColor,
+    required this.strokeWidth,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final fillPaint = Paint()
+      ..color = fillColor
+      ..style = PaintingStyle.fill;
+    final strokePaint = Paint()
+      ..color = strokeColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth;
+
+    for (final geometryPath in geometry.paths) {
+      if (geometryPath.size.width == 0 || geometryPath.size.height == 0) {
+        continue;
+      }
+      final scaleX = size.width / geometryPath.size.width;
+      final scaleY = size.height / geometryPath.size.height;
+      final path = Path();
+
+      for (final command in geometryPath.commands) {
+        final point = _scale(command.point, scaleX, scaleY);
+        switch (command.type) {
+          case CustomPathCommandType.moveTo:
+            path.moveTo(point.dx, point.dy);
+            break;
+          case CustomPathCommandType.lineTo:
+            path.lineTo(point.dx, point.dy);
+            break;
+          case CustomPathCommandType.cubicTo:
+            final control1 = _scale(
+              command.control1 ?? Offset.zero,
+              scaleX,
+              scaleY,
+            );
+            final control2 = _scale(
+              command.control2 ?? Offset.zero,
+              scaleX,
+              scaleY,
+            );
+            path.cubicTo(
+              control1.dx,
+              control1.dy,
+              control2.dx,
+              control2.dy,
+              point.dx,
+              point.dy,
+            );
+            break;
+          case CustomPathCommandType.close:
+            path.close();
+            break;
+        }
+      }
+
+      if (fillColor.alpha > 0) canvas.drawPath(path, fillPaint);
+      if (strokeWidth > 0 && strokeColor.alpha > 0) {
+        canvas.drawPath(path, strokePaint);
+      }
+    }
+  }
+
+  Offset _scale(Offset point, double scaleX, double scaleY) {
+    return Offset(point.dx * scaleX, point.dy * scaleY);
+  }
+
+  @override
+  bool shouldRepaint(covariant _CustomGeometryPainter oldDelegate) {
+    return oldDelegate.geometry != geometry ||
+        oldDelegate.fillColor != fillColor ||
+        oldDelegate.strokeColor != strokeColor ||
+        oldDelegate.strokeWidth != strokeWidth;
+  }
+}
+
+class _DonutPainter extends CustomPainter {
+  final Color fillColor;
+  final Color? gradientStart;
+  final Color? gradientEnd;
+  final Color strokeColor;
+  final double strokeWidth;
+
+  _DonutPainter({
+    required this.fillColor,
+    required this.gradientStart,
+    required this.gradientEnd,
+    required this.strokeColor,
+    required this.strokeWidth,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final outer = Rect.fromLTWH(0, 0, size.width, size.height);
+    final shortest = min(size.width, size.height);
+    final inset = shortest * 0.18;
+    final inner = outer.deflate(inset);
+    final path = Path()
+      ..fillType = PathFillType.evenOdd
+      ..addOval(outer)
+      ..addOval(inner);
+
+    final paint = Paint()..style = PaintingStyle.fill;
+    if (gradientStart != null && gradientEnd != null) {
+      paint.shader = LinearGradient(
+        colors: [gradientStart!, gradientEnd!],
+      ).createShader(outer);
+    } else {
+      paint.color = fillColor;
+    }
+    canvas.drawPath(path, paint);
+
+    if (strokeWidth > 0 && strokeColor.alpha > 0) {
+      final strokePaint = Paint()
+        ..style = PaintingStyle.stroke
+        ..color = strokeColor
+        ..strokeWidth = strokeWidth;
+      canvas.drawOval(outer.deflate(strokeWidth / 2), strokePaint);
+      canvas.drawOval(inner.inflate(strokeWidth / 2), strokePaint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _DonutPainter oldDelegate) {
+    return oldDelegate.fillColor != fillColor ||
+        oldDelegate.gradientStart != gradientStart ||
+        oldDelegate.gradientEnd != gradientEnd ||
+        oldDelegate.strokeColor != strokeColor ||
+        oldDelegate.strokeWidth != strokeWidth;
+  }
 }
 
 class _PolygonPainter extends CustomPainter {
@@ -223,11 +399,17 @@ class _StarPainter extends CustomPainter {
   final Color strokeColor;
   final double strokeWidth;
 
-  _StarPainter({required this.color, required this.strokeColor, required this.strokeWidth});
+  _StarPainter({
+    required this.color,
+    required this.strokeColor,
+    required this.strokeWidth,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()..color = color..style = PaintingStyle.fill;
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
     final path = Path();
     final center = Offset(size.width / 2, size.height / 2);
     final outerRadius = min(size.width, size.height) / 2;
@@ -238,8 +420,10 @@ class _StarPainter extends CustomPainter {
       final radius = i.isEven ? outerRadius : innerRadius;
       final x = center.dx + radius * cos(angle);
       final y = center.dy + radius * sin(angle);
-      if (i == 0) path.moveTo(x, y);
-      else path.lineTo(x, y);
+      if (i == 0)
+        path.moveTo(x, y);
+      else
+        path.lineTo(x, y);
     }
     path.close();
     canvas.drawPath(path, paint);
@@ -262,11 +446,17 @@ class _ArrowPainter extends CustomPainter {
   final Color strokeColor;
   final double strokeWidth;
 
-  _ArrowPainter({required this.color, required this.strokeColor, required this.strokeWidth});
+  _ArrowPainter({
+    required this.color,
+    required this.strokeColor,
+    required this.strokeWidth,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()..color = color..style = PaintingStyle.fill;
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
     final path = Path();
 
     final w = size.width;

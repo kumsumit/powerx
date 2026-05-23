@@ -120,6 +120,7 @@ class ShapeElement extends SlideElement {
   final ShadowProperties? shadow;
   final bool flipHorizontal;
   final bool flipVertical;
+  final CustomGeometry? customGeometry;
 
   const ShapeElement({
     required super.id,
@@ -142,6 +143,7 @@ class ShapeElement extends SlideElement {
     this.shadow,
     this.flipHorizontal = false,
     this.flipVertical = false,
+    this.customGeometry,
   });
 
   @override
@@ -165,6 +167,7 @@ class ShapeElement extends SlideElement {
     ShadowProperties? shadow,
     bool? flipHorizontal,
     bool? flipVertical,
+    CustomGeometry? customGeometry,
   }) => ShapeElement(
     id: id,
     position: position ?? this.position,
@@ -186,6 +189,7 @@ class ShapeElement extends SlideElement {
     shadow: shadow ?? this.shadow,
     flipHorizontal: flipHorizontal ?? this.flipHorizontal,
     flipVertical: flipVertical ?? this.flipVertical,
+    customGeometry: customGeometry ?? this.customGeometry,
   );
 
   @override
@@ -195,10 +199,49 @@ class ShapeElement extends SlideElement {
     size,
     fillColor,
     shapeType,
+    customGeometry,
     zIndex,
     hidden,
   ];
 }
+
+class CustomGeometry extends Equatable {
+  final List<CustomGeometryPath> paths;
+
+  const CustomGeometry({required this.paths});
+
+  @override
+  List<Object?> get props => [paths];
+}
+
+class CustomGeometryPath extends Equatable {
+  final Size size;
+  final List<CustomPathCommand> commands;
+
+  const CustomGeometryPath({required this.size, required this.commands});
+
+  @override
+  List<Object?> get props => [size, commands];
+}
+
+class CustomPathCommand extends Equatable {
+  final CustomPathCommandType type;
+  final Offset point;
+  final Offset? control1;
+  final Offset? control2;
+
+  const CustomPathCommand({
+    required this.type,
+    this.point = Offset.zero,
+    this.control1,
+    this.control2,
+  });
+
+  @override
+  List<Object?> get props => [type, point, control1, control2];
+}
+
+enum CustomPathCommandType { moveTo, lineTo, cubicTo, close }
 
 class ImageElement extends SlideElement {
   final String imagePath;
@@ -209,6 +252,7 @@ class ImageElement extends SlideElement {
   final double? cropBottom;
   final double brightness;
   final double contrast;
+  final double opacity;
   final bool recolor;
   final Color? recolorColor;
 
@@ -229,6 +273,7 @@ class ImageElement extends SlideElement {
     this.cropBottom,
     this.brightness = 0,
     this.contrast = 0,
+    this.opacity = 1.0,
     this.recolor = false,
     this.recolorColor,
   });
@@ -246,6 +291,7 @@ class ImageElement extends SlideElement {
     ImageFillMode? fillMode,
     double? brightness,
     double? contrast,
+    double? opacity,
   }) => ImageElement(
     id: id,
     position: position ?? this.position,
@@ -259,10 +305,19 @@ class ImageElement extends SlideElement {
     fillMode: fillMode ?? this.fillMode,
     brightness: brightness ?? this.brightness,
     contrast: contrast ?? this.contrast,
+    opacity: opacity ?? this.opacity,
   );
 
   @override
-  List<Object?> get props => [id, position, size, imagePath, zIndex, hidden];
+  List<Object?> get props => [
+    id,
+    position,
+    size,
+    imagePath,
+    opacity,
+    zIndex,
+    hidden,
+  ];
 }
 
 class VideoElement extends SlideElement {
@@ -372,9 +427,19 @@ class InkElement extends SlideElement {
   );
 
   @override
-  List<Object?> get props => [id, position, size, points, color, thickness, opacity, isHighlighter, zIndex, hidden];
+  List<Object?> get props => [
+    id,
+    position,
+    size,
+    points,
+    color,
+    thickness,
+    opacity,
+    isHighlighter,
+    zIndex,
+    hidden,
+  ];
 }
-
 
 class GroupElement extends SlideElement {
   final List<SlideElement> children;
@@ -426,6 +491,7 @@ enum ShapeType {
   pentagon,
   hexagon,
   arrow,
+  donut,
   star,
   custom,
 }

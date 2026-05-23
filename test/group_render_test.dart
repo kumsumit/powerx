@@ -10,6 +10,7 @@ import 'package:powerx/widgets/canvas/canvas_area.dart';
 import 'package:powerx/widgets/editor_shell.dart';
 import 'package:powerx/widgets/presenter/presentation_view.dart';
 import 'package:powerx/widgets/presenter/presenter_view.dart';
+import 'package:powerx/widgets/shapes/shape_renderer.dart';
 
 void main() {
   testWidgets('renders a grouped element without ParentData conflicts', (
@@ -162,7 +163,62 @@ void main() {
       await cubit.close();
     },
   );
+
+  testWidgets('renders custom geometry shape paths', (tester) async {
+    tester.view.physicalSize = const Size(320, 240);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Center(
+          child: SizedBox(
+            width: 100,
+            height: 100,
+            child: ShapeRenderer(shape: _customShape),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
+    expect(find.byType(ShapeRenderer), findsOneWidget);
+  });
 }
+
+const _customShape = ShapeElement(
+  id: 'custom-shape',
+  position: Offset.zero,
+  size: Size(100, 100),
+  zIndex: 0,
+  fillColor: Color(0xFFFF0000),
+  shapeType: ShapeType.custom,
+  customGeometry: CustomGeometry(
+    paths: [
+      CustomGeometryPath(
+        size: Size(100, 100),
+        commands: [
+          CustomPathCommand(
+            type: CustomPathCommandType.moveTo,
+            point: Offset(0, 100),
+          ),
+          CustomPathCommand(
+            type: CustomPathCommandType.cubicTo,
+            control1: Offset(30, 0),
+            control2: Offset(70, 0),
+            point: Offset(100, 100),
+          ),
+          CustomPathCommand(
+            type: CustomPathCommandType.lineTo,
+            point: Offset(0, 100),
+          ),
+          CustomPathCommand(type: CustomPathCommandType.close),
+        ],
+      ),
+    ],
+  ),
+);
 
 Presentation _groupedPresentation() {
   return const Presentation(

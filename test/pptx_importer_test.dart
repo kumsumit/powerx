@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:powerx/engine/pptx_importer.dart';
 import 'package:powerx/models/elements.dart';
 import 'package:powerx/models/chart.dart';
+import 'package:powerx/models/slide_master.dart';
 
 void main() {
   test('imports slides through relative presentation relationships', () async {
@@ -31,6 +32,15 @@ void main() {
         ArchiveFile.string('ppt/slides/slide1.xml', '''
 <p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
   <p:cSld>
+    <p:bg><p:bgPr>
+      <a:gradFill>
+        <a:gsLst>
+          <a:gs pos="0"><a:srgbClr val="5111D6"/></a:gs>
+          <a:gs pos="100000"><a:srgbClr val="171E4A"/></a:gs>
+        </a:gsLst>
+        <a:lin ang="0"/>
+      </a:gradFill>
+    </p:bgPr></p:bg>
     <p:spTree>
       <p:nvGrpSpPr/>
       <p:grpSpPr/>
@@ -82,6 +92,10 @@ void main() {
     final presentation = await PptxImporter().import(file.path);
 
     expect(presentation.slides, hasLength(1));
+    final background = presentation.activeSlide.backgroundFillOverride;
+    expect(background?.type, BackgroundFillType.gradient);
+    expect(background?.gradient?.stops.first.color, const Color(0xFF5111D6));
+    expect(background?.gradient?.stops.last.color, const Color(0xFF171E4A));
     expect(presentation.activeSlide.transition.duration.inMilliseconds, 123);
     final image = presentation.activeSlide.elements
         .whereType<ImageElement>()
@@ -152,14 +166,11 @@ void main() {
 '''),
         )
         ..addFile(
-          ArchiveFile.string(
-            'ppt/slideMasters/_rels/slideMaster1.xml.rels',
-            '''
+          ArchiveFile.string('ppt/slideMasters/_rels/slideMaster1.xml.rels', '''
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rIdT" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="../theme/theme1.xml"/>
 </Relationships>
-''',
-          ),
+'''),
         )
         // Layout: the title placeholder's geometry lives here, not on the slide.
         ..addFile(
@@ -175,14 +186,11 @@ void main() {
 '''),
         )
         ..addFile(
-          ArchiveFile.string(
-            'ppt/slideLayouts/_rels/slideLayout1.xml.rels',
-            '''
+          ArchiveFile.string('ppt/slideLayouts/_rels/slideLayout1.xml.rels', '''
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rIdM" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideMasters/slideMaster1.xml"/>
 </Relationships>
-''',
-          ),
+'''),
         )
         // Slide: title has NO xfrm (inherits layout), a shape filled with
         // schemeClr accent1, and a 1:1 group wrapping a child shape.
@@ -265,6 +273,70 @@ void main() {
       expect(group.children.first.size.width, closeTo(48, 0.01));
     },
   );
+
+  test('imports empty custom geometry text boxes as shapes', () async {
+    final archive = Archive()
+      ..addFile(
+        ArchiveFile.string('ppt/presentation.xml', '''
+<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <p:sldSz cx="9144000" cy="5143500"/>
+  <p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst>
+</p:presentation>
+'''),
+      )
+      ..addFile(
+        ArchiveFile.string('ppt/_rels/presentation.xml.rels', '''
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>
+</Relationships>
+'''),
+      )
+      ..addFile(
+        ArchiveFile.string('ppt/slides/slide1.xml', '''
+<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <p:cSld><p:spTree>
+    <p:sp>
+      <p:nvSpPr><p:cNvPr id="2" name="Vector"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+      <p:spPr>
+        <a:xfrm><a:off x="914400" y="914400"/><a:ext cx="914400" cy="914400"/></a:xfrm>
+        <a:custGeom>
+          <a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:rect l="l" t="t" r="r" b="b"/>
+          <a:pathLst>
+            <a:path w="100" h="100">
+              <a:moveTo><a:pt x="0" y="100"/></a:moveTo>
+              <a:cubicBezTo><a:pt x="30" y="0"/><a:pt x="70" y="0"/><a:pt x="100" y="100"/></a:cubicBezTo>
+              <a:lnTo><a:pt x="0" y="100"/></a:lnTo>
+              <a:close/>
+            </a:path>
+          </a:pathLst>
+        </a:custGeom>
+        <a:solidFill><a:srgbClr val="FF0000"/></a:solidFill>
+        <a:ln><a:noFill/></a:ln>
+      </p:spPr>
+      <p:txBody><a:bodyPr/><a:p/></p:txBody>
+    </p:sp>
+  </p:spTree></p:cSld>
+</p:sld>
+'''),
+      );
+
+    final file = File(
+      '${Directory.systemTemp.path}/powerx_custom_geom_test.pptx',
+    );
+    await file.writeAsBytes(ZipEncoder().encode(archive));
+    addTearDown(() {
+      if (file.existsSync()) file.deleteSync();
+    });
+
+    final pres = await PptxImporter().import(file.path);
+    final shape = pres.activeSlide.elements.whereType<ShapeElement>().single;
+
+    expect(shape.name, 'Vector');
+    expect(shape.shapeType, ShapeType.custom);
+    expect(shape.customGeometry, isNotNull);
+    expect(shape.customGeometry!.paths.single.commands, hasLength(4));
+    expect(pres.activeSlide.elements.whereType<TextElement>(), isEmpty);
+  });
 
   test('parses an embedded chart part into chart data', () async {
     final archive = Archive()
