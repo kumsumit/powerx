@@ -318,6 +318,64 @@ class VideoElement extends SlideElement {
   List<Object?> get props => [id, videoPath, zIndex];
 }
 
+class InkElement extends SlideElement {
+  final List<Offset> points;
+  final Color color;
+  final double thickness;
+  final double opacity;
+  final bool isHighlighter;
+
+  const InkElement({
+    required super.id,
+    required super.position,
+    required super.size,
+    super.rotation,
+    super.isLocked,
+    required super.zIndex,
+    super.name,
+    super.hidden,
+    required this.points,
+    this.color = const Color(0xFF000000),
+    this.thickness = 2.0,
+    this.opacity = 1.0,
+    this.isHighlighter = false,
+  });
+
+  @override
+  InkElement copyWith({
+    Offset? position,
+    Size? size,
+    double? rotation,
+    bool? isLocked,
+    int? zIndex,
+    String? name,
+    bool? hidden,
+    List<Offset>? points,
+    Color? color,
+    double? thickness,
+    double? opacity,
+    bool? isHighlighter,
+  }) => InkElement(
+    id: id,
+    position: position ?? this.position,
+    size: size ?? this.size,
+    rotation: rotation ?? this.rotation,
+    isLocked: isLocked ?? this.isLocked,
+    zIndex: zIndex ?? this.zIndex,
+    name: name ?? this.name,
+    hidden: hidden ?? this.hidden,
+    points: points ?? this.points,
+    color: color ?? this.color,
+    thickness: thickness ?? this.thickness,
+    opacity: opacity ?? this.opacity,
+    isHighlighter: isHighlighter ?? this.isHighlighter,
+  );
+
+  @override
+  List<Object?> get props => [id, position, size, points, color, thickness, opacity, isHighlighter, zIndex, hidden];
+}
+
+
 class GroupElement extends SlideElement {
   final List<SlideElement> children;
 

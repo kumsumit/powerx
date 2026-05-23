@@ -88,10 +88,10 @@ class EditorShell extends StatelessWidget {
                   child: Row(
                     children: [
                       const SizedBox(width: 260, child: SlideThumbnailPanel()),
-                      const VerticalDivider(width: 1),
+                      VerticalDivider(width: 1, thickness: 1, color: Colors.grey.shade200),
                       Expanded(child: CanvasArea(zoom: state.canvasZoom)),
-                      const VerticalDivider(width: 1),
-                      SizedBox(width: 300, child: PropertiesPanel()),
+                      VerticalDivider(width: 1, thickness: 1, color: Colors.grey.shade200),
+                      const SizedBox(width: 300, child: PropertiesPanel()),
                     ],
                   ),
                 ),

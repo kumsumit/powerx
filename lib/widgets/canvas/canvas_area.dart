@@ -13,6 +13,7 @@ import '../shapes/shape_renderer.dart';
 import '../tables/table_widget.dart';
 import '../shapes/selection_handles.dart';
 import '../../engine/charts/advanced_charts.dart';
+import '../ink/ink_canvas.dart';
 
 const _uuid = Uuid();
 
@@ -22,6 +23,7 @@ class CanvasArea extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cubit = context.read<EditorCubit>();
     final state = context.watch<EditorCubit>().state;
     final slide = state.activeSlide;
     final settings = state.presentation.settings;
@@ -53,6 +55,32 @@ class CanvasArea extends StatelessWidget {
                       isMultiSelected: state.multiSelectedIds.contains(e.id),
                     ),
                   ),
+                  if (state.activeTool == Tool.pen)
+                    Positioned.fill(
+                      child: InkCanvas(
+                        strokes: const [],
+                        canvasSize: settings.slideSize,
+                        onStrokeComplete: (stroke) {
+                          final bounds = stroke.bounds;
+                          if (bounds.width < 2 && bounds.height < 2) return;
+                          final localPoints = stroke.points
+                              .map((p) => Offset(p.x - bounds.left, p.y - bounds.top))
+                              .toList();
+                          final inkEl = InkElement(
+                            id: stroke.id,
+                            position: bounds.topLeft,
+                            size: bounds.size,
+                            zIndex: slide.elements.length,
+                            points: localPoints,
+                            color: stroke.color,
+                            thickness: stroke.thickness,
+                            isHighlighter: stroke.isHighlighter,
+                          );
+                          cubit.addElement(inkEl);
+                          cubit.setTool(Tool.select);
+                        },
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -172,7 +200,7 @@ class CanvasArea extends StatelessWidget {
   }
 }
 
-class _ElementRenderer extends StatelessWidget {
+class _ElementRenderer extends StatefulWidget {
   final SlideElement element;
   final bool isSelected;
   final bool isMultiSelected;
@@ -185,25 +213,42 @@ class _ElementRenderer extends StatelessWidget {
   });
 
   @override
+  State<_ElementRenderer> createState() => _ElementRendererState();
+}
+
+class _ElementRendererState extends State<_ElementRenderer> {
+  bool _isEditing = false;
+
+  @override
+  void didUpdateWidget(_ElementRenderer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!widget.isSelected && _isEditing) {
+      setState(() => _isEditing = false);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final cubit = context.read<EditorCubit>();
+    final element = widget.element;
 
     Widget content;
     if (element is TextElement) {
-      content = _TextElementRenderer(
-        element: element as TextElement,
-        isSelected: isSelected,
-      );
+      content = _isEditing
+          ? _buildTextEditor(element, cubit)
+          : _buildTextDisplay(element);
     } else if (element is ShapeElement) {
-      content = ShapeRenderer(shape: element as ShapeElement);
+      content = ShapeRenderer(shape: element);
     } else if (element is ImageElement) {
-      content = _ImageElementRenderer(element: element as ImageElement);
+      content = _ImageElementRenderer(element: element);
     } else if (element is TableElement) {
-      content = TableWidget(table: element as TableElement);
+      content = TableWidget(table: element);
     } else if (element is ChartElement) {
-      content = _ChartPlaceholder(element: element as ChartElement);
+      content = _ChartPlaceholder(element: element);
     } else if (element is GroupElement) {
-      content = _GroupElementRenderer(element: element as GroupElement);
+      content = _GroupElementRenderer(element: element);
+    } else if (element is InkElement) {
+      content = _InkElementRenderer(element: element);
     } else {
       content = const SizedBox();
     }
@@ -215,8 +260,14 @@ class _ElementRenderer extends StatelessWidget {
       height: element.size.height,
       child: GestureDetector(
         behavior: HitTestBehavior.translucent,
-        onTap: () => cubit.selectElement(element.id),
-        onPanUpdate: isSelected && !element.isLocked
+        onTap: () {
+          if (widget.isSelected && element is TextElement && !_isEditing) {
+            setState(() => _isEditing = true);
+          } else if (!widget.isSelected) {
+            cubit.selectElement(element.id);
+          }
+        },
+        onPanUpdate: widget.isSelected && !element.isLocked && !_isEditing
             ? (details) => cubit.moveElement(element.id, details.delta)
             : null,
         child: Transform.rotate(
@@ -226,7 +277,7 @@ class _ElementRenderer extends StatelessWidget {
             clipBehavior: Clip.none,
             children: [
               content,
-              if (isSelected)
+              if (widget.isSelected && !_isEditing)
                 Positioned.fill(
                   child: SelectionHandles(
                     element: element,
@@ -237,13 +288,13 @@ class _ElementRenderer extends StatelessWidget {
                     ),
                   ),
                 ),
-              if (isSelected || isMultiSelected)
+              if (widget.isSelected || widget.isMultiSelected)
                 Positioned.fill(
                   child: IgnorePointer(
                     child: Container(
                       decoration: BoxDecoration(
                         border: Border.all(
-                          color: isSelected
+                          color: widget.isSelected
                               ? const Color(0xFF4472C4)
                               : const Color(0xFFFFA500),
                           width: 2,
@@ -258,75 +309,52 @@ class _ElementRenderer extends StatelessWidget {
       ),
     );
   }
-}
 
-class _TextElementRenderer extends StatefulWidget {
-  final TextElement element;
-  final bool isSelected;
-  const _TextElementRenderer({required this.element, required this.isSelected});
+  Widget _buildTextEditor(TextElement element, EditorCubit cubit) {
+    return Container(
+      color: element.fillColor ?? Colors.transparent,
+      padding: element.padding,
+      child: RichTextEditor(
+        paragraphs: element.paragraphs,
+        onChanged: (paragraphs) =>
+            cubit.updateTextElement(element.id, paragraphs),
+        onDone: () => setState(() => _isEditing = false),
+      ),
+    );
+  }
 
-  @override
-  State<_TextElementRenderer> createState() => _TextElementRendererState();
-}
-
-class _TextElementRendererState extends State<_TextElementRenderer> {
-  bool _isEditing = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final cubit = context.read<EditorCubit>();
-
-    if (_isEditing && widget.isSelected) {
-      return Container(
-        color: widget.element.fillColor ?? Colors.transparent,
-        padding: widget.element.padding,
-        child: RichTextEditor(
-          paragraphs: widget.element.paragraphs,
-          onChanged: (paragraphs) =>
-              cubit.updateTextElement(widget.element.id, paragraphs),
-          onDone: () => setState(() => _isEditing = false),
-        ),
-      );
-    }
-
-    return GestureDetector(
-      onTap: widget.isSelected
-          ? () => setState(() => _isEditing = true)
-          : null,
-      child: Container(
-        color: widget.element.fillColor,
-        padding: widget.element.padding,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: widget.element.paragraphs.map((para) {
-            return RichText(
-              text: TextSpan(
-                children: para.runs.map((run) {
-                  return TextSpan(
-                    text: run.text,
-                    style: TextStyle(
-                      fontFamily: run.fontFamily,
-                      fontSize: run.fontSize,
-                      color: run.color,
-                      fontWeight: run.bold
-                          ? FontWeight.bold
-                          : FontWeight.normal,
-                      fontStyle: run.italic
-                          ? FontStyle.italic
-                          : FontStyle.normal,
-                      decoration: run.underline
-                          ? TextDecoration.underline
-                          : run.strikethrough
-                          ? TextDecoration.lineThrough
-                          : TextDecoration.none,
-                    ),
-                  );
-                }).toList(),
-              ),
-            );
-          }).toList(),
-        ),
+  Widget _buildTextDisplay(TextElement element) {
+    return Container(
+      color: element.fillColor,
+      padding: element.padding,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: element.paragraphs.map((para) {
+          return RichText(
+            text: TextSpan(
+              children: para.runs.map((run) {
+                return TextSpan(
+                  text: run.text,
+                  style: TextStyle(
+                    fontFamily: run.fontFamily,
+                    fontSize: run.fontSize,
+                    color: run.color,
+                    fontWeight:
+                        run.bold ? FontWeight.bold : FontWeight.normal,
+                    fontStyle:
+                        run.italic ? FontStyle.italic : FontStyle.normal,
+                    decoration: run.underline
+                        ? TextDecoration.underline
+                        : run.strikethrough
+                        ? TextDecoration.lineThrough
+                        : TextDecoration.none,
+                  ),
+                );
+              }).toList(),
+            ),
+          );
+        }).toList(),
       ),
     );
   }
@@ -439,4 +467,67 @@ class _GroupElementRenderer extends StatelessWidget {
       }).toList(),
     );
   }
+}
+
+class _InkElementRenderer extends StatelessWidget {
+  final InkElement element;
+  const _InkElementRenderer({required this.element});
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      size: element.size,
+      painter: _InkElementPainter(
+        points: element.points,
+        color: element.color,
+        thickness: element.thickness,
+        isHighlighter: element.isHighlighter,
+        opacity: element.opacity,
+      ),
+    );
+  }
+}
+
+class _InkElementPainter extends CustomPainter {
+  final List<Offset> points;
+  final Color color;
+  final double thickness;
+  final bool isHighlighter;
+  final double opacity;
+
+  _InkElementPainter({
+    required this.points,
+    required this.color,
+    required this.thickness,
+    required this.isHighlighter,
+    required this.opacity,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (points.length < 2) return;
+
+    final paint = Paint()
+      ..color = isHighlighter
+          ? color.withOpacity(0.3)
+          : color.withOpacity(opacity)
+      ..strokeWidth = isHighlighter ? thickness * 3 : thickness
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..style = PaintingStyle.stroke;
+
+    if (isHighlighter) {
+      paint.blendMode = BlendMode.multiply;
+    }
+
+    final path = Path();
+    path.moveTo(points[0].dx, points[0].dy);
+    for (int i = 1; i < points.length; i++) {
+      path.lineTo(points[i].dx, points[i].dy);
+    }
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }

@@ -483,6 +483,36 @@ class EditorCubit extends Cubit<EditorState> {
         id: newId, position: offset, size: el.size, rotation: el.rotation,
         zIndex: newZ, imagePath: el.imagePath, fillMode: el.fillMode,
       );
+    } else if (el is InkElement) {
+      newEl = InkElement(
+        id: newId, position: offset, size: el.size, rotation: el.rotation,
+        zIndex: newZ, points: el.points, color: el.color,
+        thickness: el.thickness, opacity: el.opacity,
+        isHighlighter: el.isHighlighter,
+      );
+    } else if (el is pt.TableElement) {
+      newEl = pt.TableElement(
+        id: newId, position: offset, size: el.size, rotation: el.rotation,
+        zIndex: newZ, rows: el.rows, columns: el.columns, cells: el.cells,
+        bandedRows: el.bandedRows, firstRowHeader: el.firstRowHeader,
+      );
+    } else if (el is ChartElement) {
+      newEl = ChartElement(
+        id: newId, position: offset, size: el.size, rotation: el.rotation,
+        zIndex: newZ, type: el.type, data: el.data, style: el.style,
+        title: el.title, hasTitle: el.hasTitle, hasLegend: el.hasLegend,
+      );
+    } else if (el is VideoElement) {
+      newEl = VideoElement(
+        id: newId, position: offset, size: el.size, rotation: el.rotation,
+        zIndex: newZ, videoPath: el.videoPath, autoPlay: el.autoPlay,
+        loop: el.loop, volume: el.volume,
+      );
+    } else if (el is GroupElement) {
+      newEl = GroupElement(
+        id: newId, position: offset, size: el.size, rotation: el.rotation,
+        zIndex: newZ, children: el.children,
+      );
     } else {
       return;
     }

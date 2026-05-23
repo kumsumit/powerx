@@ -26,13 +26,25 @@ class _RibbonState extends State<Ribbon> {
   Widget build(BuildContext context) {
     return Container(
       height: 124,
-      color: const Color(0xFFB7472A),
+      decoration: const BoxDecoration(
+        color: Color(0xFFC43E1C),
+        gradient: LinearGradient(
+          colors: [Color(0xFFC43E1C), Color(0xFFA63114)],
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+        ),
+      ),
       child: Column(
         children: [
           _buildTabBar(context),
           Expanded(
             child: Container(
-              color: const Color(0xFFF3F2F1),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8F9FA),
+                border: Border(
+                  bottom: BorderSide(color: Colors.grey.shade200, width: 1),
+                ),
+              ),
               child: _buildToolbar(context),
             ),
           ),
@@ -587,12 +599,7 @@ class _AnimationsToolbar extends StatelessWidget {
                           category: AnimationCategory.entrance,
                         );
                         final existing = List<SlideAnimation>.from(slide.animations.animations)..add(newAnim);
-                        final s = slide.copyWith(
-                          animations: AnimationTimeline(animations: existing),
-                        );
-                        final slides = List.from(state.presentation.slides);
-                        slides[state.presentation.activeSlideIndex] = s;
-                        cubit.updateElement(state.activeSlide.elements.firstWhere((el) => el.id == selId));
+                        cubit.updateSlideAnimations(AnimationTimeline(animations: existing));
                       }
                     : null,
               );
@@ -714,25 +721,27 @@ class _Tab extends StatelessWidget {
   Widget build(BuildContext context) {
     return InkWell(
       onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14),
+      hoverColor: Colors.white.withOpacity(0.08),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 16),
         alignment: Alignment.center,
         height: 34,
         decoration: isActive
             ? const BoxDecoration(
-                color: Color(0xFFF3F2F1),
+                color: Color(0xFFF8F9FA),
                 borderRadius: BorderRadius.only(
-                  topLeft: Radius.circular(4),
-                  topRight: Radius.circular(4),
+                  topLeft: Radius.circular(6),
+                  topRight: Radius.circular(6),
                 ),
               )
             : null,
         child: Text(
           label,
           style: TextStyle(
-            color: isActive ? Colors.black : Colors.white,
+            color: isActive ? const Color(0xFFC43E1C) : Colors.white.withOpacity(0.9),
             fontSize: 13,
-            fontWeight: FontWeight.w500,
+            fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
           ),
         ),
       ),
@@ -748,13 +757,28 @@ class _ToolGroup extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Wrap(spacing: 1, runSpacing: 2, children: children),
-          const SizedBox(height: 2),
-          Text(label, style: const TextStyle(fontSize: 9, color: Colors.grey)),
+          Expanded(
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: children.map((c) => Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 2),
+                child: c,
+              )).toList(),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 9,
+              fontWeight: FontWeight.w500,
+              color: Colors.grey.shade500,
+            ),
+          ),
         ],
       ),
     );
@@ -777,37 +801,55 @@ class _ToolButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final enabled = onTap != null;
+    final activeBgColor = const Color(0xFFC43E1C).withOpacity(0.08);
+    final activeIconColor = const Color(0xFFC43E1C);
+
     return Tooltip(
       message: label,
-      child: Material(
-        color: isActive ? Colors.grey[300] : Colors.transparent,
-        borderRadius: BorderRadius.circular(4),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(4),
-          child: Opacity(
-            opacity: enabled ? 1.0 : 0.4,
-            child: Container(
-              width: 50,
-              height: 54,
-              padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    icon,
-                    size: 20,
-                    color: isActive ? const Color(0xFFB7472A) : Colors.black87,
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    label,
-                    style: const TextStyle(fontSize: 9),
-                    textAlign: TextAlign.center,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        decoration: BoxDecoration(
+          color: isActive ? activeBgColor : Colors.transparent,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+            color: isActive ? activeIconColor.withOpacity(0.24) : Colors.transparent,
+            width: 1,
+          ),
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(6),
+            hoverColor: const Color(0xFFC43E1C).withOpacity(0.04),
+            child: Opacity(
+              opacity: enabled ? 1.0 : 0.35,
+              child: Container(
+                width: 52,
+                height: 52,
+                padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      icon,
+                      size: 20,
+                      color: isActive ? activeIconColor : Colors.blueGrey.shade700,
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      label,
+                      style: TextStyle(
+                        fontSize: 9,
+                        fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
+                        color: isActive ? activeIconColor : Colors.blueGrey.shade800,
+                      ),
+                      textAlign: TextAlign.center,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -822,9 +864,10 @@ class _VDiv extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const SizedBox(
-      height: 80,
-      child: VerticalDivider(width: 8, indent: 4, endIndent: 4),
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 12),
+      width: 1,
+      color: Colors.grey.shade300,
     );
   }
 }

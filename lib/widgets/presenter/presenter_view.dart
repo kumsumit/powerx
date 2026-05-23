@@ -1,9 +1,16 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../models/presentation.dart';
 import '../../models/elements.dart';
+import '../../models/table.dart' as pt;
+import '../../models/chart.dart';
+import '../shapes/shape_renderer.dart';
+import '../tables/table_widget.dart';
+import '../../engine/charts/advanced_charts.dart';
 
 class PresenterView extends StatefulWidget {
   final Presentation presentation;
@@ -91,12 +98,17 @@ class _PresenterViewState extends State<PresenterView> {
                       padding: const EdgeInsets.all(16),
                       child: AspectRatio(
                         aspectRatio: 16 / 9,
-                        child: Container(
-                          color: slide.backgroundColorOverride ?? Colors.white,
-                          child: Stack(
-                            children: slide.elements
-                                .map((e) => _buildElement(e))
-                                .toList(),
+                        child: FittedBox(
+                          fit: BoxFit.contain,
+                          child: Container(
+                            width: 960,
+                            height: 540,
+                            color: slide.backgroundColorOverride ?? Colors.white,
+                            child: Stack(
+                              children: slide.elements
+                                  .map((e) => _buildElement(e))
+                                  .toList(),
+                            ),
                           ),
                         ),
                       ),
@@ -189,13 +201,18 @@ class _PresenterViewState extends State<PresenterView> {
                   if (nextSlide != null)
                     AspectRatio(
                       aspectRatio: 16 / 9,
-                      child: Container(
-                        color:
-                            nextSlide.backgroundColorOverride ?? Colors.white,
-                        child: Stack(
-                          children: nextSlide.elements
-                              .map((e) => _buildElement(e, scale: 0.3))
-                              .toList(),
+                      child: FittedBox(
+                        fit: BoxFit.contain,
+                        child: Container(
+                          width: 960,
+                          height: 540,
+                          color:
+                              nextSlide.backgroundColorOverride ?? Colors.white,
+                          child: Stack(
+                            children: nextSlide.elements
+                                .map((e) => _buildElement(e))
+                                .toList(),
+                          ),
                         ),
                       ),
                     )
@@ -241,54 +258,169 @@ class _PresenterViewState extends State<PresenterView> {
     );
   }
 
-  Widget _buildElement(SlideElement e, {double scale = 1.0}) {
+  Widget _buildElement(SlideElement e) {
+    Widget elementWidget;
+
+    if (e is TextElement) {
+      elementWidget = Container(
+        color: e.fillColor,
+        padding: e.padding,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: e.paragraphs.map((para) {
+            return RichText(
+              text: TextSpan(
+                children: para.runs.map((run) {
+                  return TextSpan(
+                    text: run.text,
+                    style: TextStyle(
+                      fontFamily: run.fontFamily,
+                      fontSize: run.fontSize,
+                      color: run.color,
+                      fontWeight: run.bold ? FontWeight.bold : FontWeight.normal,
+                      fontStyle: run.italic ? ui.FontStyle.italic : ui.FontStyle.normal,
+                      decoration: run.underline
+                          ? TextDecoration.underline
+                          : run.strikethrough
+                              ? TextDecoration.lineThrough
+                              : TextDecoration.none,
+                    ),
+                  );
+                }).toList(),
+              ),
+            );
+          }).toList(),
+        ),
+      );
+    } else if (e is ShapeElement) {
+      elementWidget = ShapeRenderer(shape: e);
+    } else if (e is ImageElement) {
+      elementWidget = e.imagePath.isEmpty
+          ? Container(
+              color: Colors.grey[300],
+              child: const Center(child: Icon(Icons.image, color: Colors.grey)),
+            )
+          : Image.file(
+              File(e.imagePath),
+              fit: BoxFit.fill,
+              width: e.size.width,
+              height: e.size.height,
+            );
+    } else if (e is pt.TableElement) {
+      elementWidget = TableWidget(table: e);
+    } else if (e is ChartElement) {
+      final rows = e.data.series.map((s) => s.values).toList();
+      final dataTable = ChartDataTable(
+        rowHeaders: e.data.series.map((s) => s.name).toList(),
+        columnHeaders: e.data.categories,
+        data: rows,
+        seriesColors: e.data.series.map((s) => s.color).toList(),
+      );
+      elementWidget = Container(
+        color: e.style.backgroundColor,
+        child: AdvancedChartRenderer(
+          type: _mapChartType(e.type),
+          data: dataTable,
+          size: e.size,
+          showLegend: e.hasLegend,
+          title: e.hasTitle ? e.title : null,
+        ),
+      );
+    } else if (e is InkElement) {
+      elementWidget = CustomPaint(
+        size: e.size,
+        painter: _InkElementPainter(
+          points: e.points,
+          color: e.color,
+          thickness: e.thickness,
+          isHighlighter: e.isHighlighter,
+          opacity: e.opacity,
+        ),
+      );
+    } else if (e is GroupElement) {
+      elementWidget = Stack(
+        clipBehavior: Clip.none,
+        children: e.children.map((child) {
+          return Positioned(
+            left: child.position.dx - e.position.dx,
+            top: child.position.dy - e.position.dy,
+            width: child.size.width,
+            height: child.size.height,
+            child: _buildElement(child),
+          );
+        }).toList(),
+      );
+    } else {
+      elementWidget = const SizedBox();
+    }
+
     return Positioned(
-      left: e.position.dx * scale,
-      top: e.position.dy * scale,
-      width: e.size.width * scale,
-      height: e.size.height * scale,
+      left: e.position.dx,
+      top: e.position.dy,
+      width: e.size.width,
+      height: e.size.height,
       child: Transform.rotate(
         angle: e.rotation * pi / 180,
-        child: e is TextElement
-            ? Container(
-                color: e.fillColor,
-                padding: EdgeInsets.all(e.padding.left * scale),
-                child: Text(
-                  e.paragraphs.map((p) => p.plainText).join('\n'),
-                  style: TextStyle(
-                    fontSize:
-                        (e.paragraphs.firstOrNull?.runs.firstOrNull?.fontSize ??
-                            18) *
-                        scale,
-                    color:
-                        e.paragraphs.firstOrNull?.runs.firstOrNull?.color ??
-                        Colors.black,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              )
-            : e is ShapeElement
-            ? Container(
-                decoration: BoxDecoration(
-                  color: e.fillColor,
-                  border: e.strokeWidth > 0
-                      ? Border.all(
-                          color: e.strokeColor,
-                          width: e.strokeWidth * scale,
-                        )
-                      : null,
-                  borderRadius: e.shapeType == ShapeType.circle
-                      ? BorderRadius.circular(e.size.width * scale / 2)
-                      : null,
-                ),
-              )
-            : e is ImageElement
-            ? Container(
-                color: Colors.grey[300],
-                child: const Icon(Icons.image, size: 24, color: Colors.grey),
-              )
-            : const SizedBox(),
+        child: elementWidget,
       ),
     );
   }
+
+  AdvancedChartType _mapChartType(ChartType t) {
+    switch (t) {
+      case ChartType.bar:
+        return AdvancedChartType.barClustered;
+      case ChartType.line:
+        return AdvancedChartType.line;
+      case ChartType.pie:
+        return AdvancedChartType.pie;
+      default:
+        return AdvancedChartType.columnClustered;
+    }
+  }
+}
+
+class _InkElementPainter extends CustomPainter {
+  final List<Offset> points;
+  final Color color;
+  final double thickness;
+  final bool isHighlighter;
+  final double opacity;
+
+  _InkElementPainter({
+    required this.points,
+    required this.color,
+    required this.thickness,
+    required this.isHighlighter,
+    required this.opacity,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (points.length < 2) return;
+
+    final paint = Paint()
+      ..color = isHighlighter
+          ? color.withOpacity(0.3)
+          : color.withOpacity(opacity)
+      ..strokeWidth = isHighlighter ? thickness * 3 : thickness
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..style = PaintingStyle.stroke;
+
+    if (isHighlighter) {
+      paint.blendMode = BlendMode.multiply;
+    }
+
+    final path = Path();
+    path.moveTo(points[0].dx, points[0].dy);
+    for (int i = 1; i < points.length; i++) {
+      path.lineTo(points[i].dx, points[i].dy);
+    }
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
