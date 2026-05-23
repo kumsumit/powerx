@@ -610,6 +610,37 @@ class _PresentationViewState extends State<PresentationView>
 
   // Builder for slide elements that uses fully featured custom widgets
   Widget _buildElement(SlideElement e, Slide slide) {
+    final elementWidget = _buildElementContent(e, slide);
+
+    // Wrap the element in slide-level animations
+    final elementAnims = slide.animations.animations
+        .where((a) => a.targetElementId == e.id)
+        .toList();
+
+    Widget animatedWidget = AnimationEngine.buildAnimatedElement(
+      element: e,
+      animations: elementAnims,
+      controller: _elementAnimController,
+      isPlaying: elementAnims.isNotEmpty,
+      triggerIndex: _playedAnimationsCount - 1,
+      child: elementWidget,
+    );
+
+    return Positioned(
+      left: e.position.dx,
+      top: e.position.dy,
+      width: e.size.width,
+      height: e.size.height,
+      child: Transform.rotate(
+        angle: e.rotation * pi / 180,
+        child: animatedWidget,
+      ),
+    );
+  }
+
+  /// Builds an element's visual without the outer [Positioned]/animation wrap,
+  /// so group children can be placed by their parent group's [Stack].
+  Widget _buildElementContent(SlideElement e, Slide slide) {
     Widget elementWidget;
 
     if (e is TextElement) {
@@ -669,7 +700,10 @@ class _PresentationViewState extends State<PresentationView>
             top: child.position.dy - e.position.dy,
             width: child.size.width,
             height: child.size.height,
-            child: _buildElement(child, slide),
+            child: Transform.rotate(
+              angle: child.rotation * pi / 180,
+              child: _buildElementContent(child, slide),
+            ),
           );
         }).toList(),
       );
@@ -677,30 +711,7 @@ class _PresentationViewState extends State<PresentationView>
       elementWidget = const SizedBox();
     }
 
-    // Wrap the element in slide-level animations
-    final elementAnims = slide.animations.animations
-        .where((a) => a.targetElementId == e.id)
-        .toList();
-
-    Widget animatedWidget = AnimationEngine.buildAnimatedElement(
-      element: e,
-      animations: elementAnims,
-      controller: _elementAnimController,
-      isPlaying: elementAnims.isNotEmpty,
-      triggerIndex: _playedAnimationsCount - 1,
-      child: elementWidget,
-    );
-
-    return Positioned(
-      left: e.position.dx,
-      top: e.position.dy,
-      width: e.size.width,
-      height: e.size.height,
-      child: Transform.rotate(
-        angle: e.rotation * pi / 180,
-        child: animatedWidget,
-      ),
-    );
+    return elementWidget;
   }
 
   Widget _buildTextElement(TextElement e) {

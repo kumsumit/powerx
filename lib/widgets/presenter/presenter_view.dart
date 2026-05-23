@@ -261,6 +261,23 @@ class _PresenterViewState extends State<PresenterView> {
   }
 
   Widget _buildElement(SlideElement e) {
+    final elementWidget = _buildElementContent(e);
+
+    return Positioned(
+      left: e.position.dx,
+      top: e.position.dy,
+      width: e.size.width,
+      height: e.size.height,
+      child: Transform.rotate(
+        angle: e.rotation * pi / 180,
+        child: elementWidget,
+      ),
+    );
+  }
+
+  /// Builds an element's visual without its outer [Positioned] wrapper, so
+  /// grouped children can be positioned by their parent group's [Stack].
+  Widget _buildElementContent(SlideElement e) {
     Widget elementWidget;
 
     if (e is TextElement) {
@@ -320,7 +337,10 @@ class _PresenterViewState extends State<PresenterView> {
             top: child.position.dy - e.position.dy,
             width: child.size.width,
             height: child.size.height,
-            child: _buildElement(child),
+            child: Transform.rotate(
+              angle: child.rotation * pi / 180,
+              child: _buildElementContent(child),
+            ),
           );
         }).toList(),
       );
@@ -328,16 +348,7 @@ class _PresenterViewState extends State<PresenterView> {
       elementWidget = const SizedBox();
     }
 
-    return Positioned(
-      left: e.position.dx,
-      top: e.position.dy,
-      width: e.size.width,
-      height: e.size.height,
-      child: Transform.rotate(
-        angle: e.rotation * pi / 180,
-        child: elementWidget,
-      ),
-    );
+    return elementWidget;
   }
 
   Widget _buildTextElement(TextElement e) {
