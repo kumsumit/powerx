@@ -20,6 +20,7 @@ import 'openxml_utils.dart';
 class PptxImporter {
   final _uuid = const Uuid();
 
+  late Archive _archive;
   late Map<String, Map<String, String>> _relsMap;
   late Map<String, String> _mediaFiles;
   final Map<String, _Master> _masters = {};
@@ -31,6 +32,7 @@ class PptxImporter {
   Future<Presentation> import(String filePath) async {
     final bytes = await File(filePath).readAsBytes();
     final archive = ZipDecoder().decodeBytes(bytes);
+    _archive = archive;
 
     _relsMap = _buildRelsMap(archive);
     _mediaFiles = await _extractMediaFiles(archive);
@@ -383,7 +385,7 @@ class PptxImporter {
       case 'pic':
         return _parsePicture(el, partPath, scheme);
       case 'graphicFrame':
-        return _parseGraphicFrame(el, scheme, fonts);
+        return _parseGraphicFrame(el, partPath, scheme, fonts);
       case 'grpSp':
         return _parseGroup(el, partPath, scheme, fonts);
       default:
@@ -894,6 +896,7 @@ class PptxImporter {
 
   SlideElement? _parseGraphicFrame(
     XmlElement graphicFrame,
+    String partPath,
     ColorScheme scheme,
     FontScheme fonts,
   ) {
@@ -913,17 +916,218 @@ class PptxImporter {
       if (tbl != null) return _parseTable(tbl, off, size, scheme, fonts);
     }
     if (uri == 'http://schemas.openxmlformats.org/drawingml/2006/chart') {
-      if (OpenXmlUtils.findChild(graphicData, 'chart') != null) {
-        return ChartElement(
-          id: _uuid.v4(),
-          position: off,
-          size: size,
-          data: const ChartData(),
-          zIndex: 0,
+      final chartEl = OpenXmlUtils.findChild(graphicData, 'chart');
+      final relId = OpenXmlUtils.attr(chartEl, 'id', nsPrefix: 'r');
+      String? chartPath;
+      if (relId != null) {
+        chartPath = _relsMap[_relsPathForPart(partPath)]?[relId];
+      }
+      return _parseChart(chartPath, off, size, scheme);
+    }
+    return null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Charts (ppt/charts/chartN.xml)
+  // ---------------------------------------------------------------------------
+
+  /// Reads an embedded DrawingML chart part into a [ChartElement]. The cached
+  /// values (`<c:numCache>` / `<c:strCache>`) are what PowerPoint draws from
+  /// without re-opening the workbook, so they're what we parse.
+  ChartElement _parseChart(
+    String? chartPath,
+    Offset off,
+    Size size,
+    ColorScheme scheme,
+  ) {
+    ChartData data = const ChartData();
+    var type = ChartType.column;
+    String? title;
+    var hasLegend = false;
+    var legendPosition = LegendPosition.right;
+
+    final entry = chartPath != null ? _archive.findFile(chartPath) : null;
+    if (entry != null) {
+      final root = XmlDocument.parse(
+        String.fromCharCodes(entry.content),
+      ).rootElement;
+      final chart = OpenXmlUtils.findChild(root, 'chart');
+      final plotArea = OpenXmlUtils.findChild(chart, 'plotArea');
+
+      // The first recognised plot element decides the chart type.
+      XmlElement? plot;
+      for (final child in plotArea?.childElements ?? const <XmlElement>[]) {
+        final mapped = _chartTypeFor(child.name.local, child);
+        if (mapped != null) {
+          type = mapped;
+          plot = child;
+          break;
+        }
+      }
+
+      if (plot != null) {
+        final accents = [
+          scheme.accent1,
+          scheme.accent2,
+          scheme.accent3,
+          scheme.accent4,
+          scheme.accent5,
+          scheme.accent6,
+        ];
+        final seriesEls = OpenXmlUtils.findChildren(plot, 'ser');
+        final series = <ChartSeries>[];
+        var categories = <String>[];
+        for (var i = 0; i < seriesEls.length; i++) {
+          final ser = seriesEls[i];
+          if (categories.isEmpty) {
+            categories = _readRefValues(OpenXmlUtils.findChild(ser, 'cat'));
+          }
+          series.add(
+            ChartSeries(
+              name: _seriesName(ser, i),
+              values: _readRefValues(OpenXmlUtils.findChild(ser, 'val'))
+                  .map((v) => double.tryParse(v) ?? 0)
+                  .toList(),
+              color: _seriesColor(ser, scheme) ?? accents[i % accents.length],
+            ),
+          );
+        }
+        data = ChartData(categories: categories, series: series);
+      }
+
+      title = _chartTitle(chart);
+      final legend = OpenXmlUtils.findChild(chart, 'legend');
+      if (legend != null) {
+        hasLegend = true;
+        legendPosition = _legendPosition(
+          OpenXmlUtils.attr(OpenXmlUtils.findChild(legend, 'legendPos'), 'val'),
         );
       }
     }
-    return null;
+
+    return ChartElement(
+      id: _uuid.v4(),
+      position: off,
+      size: size,
+      data: data,
+      type: type,
+      hasLegend: hasLegend,
+      legendPosition: legendPosition,
+      hasTitle: title != null && title.isNotEmpty,
+      title: title,
+      zIndex: 0,
+    );
+  }
+
+  ChartType? _chartTypeFor(String local, XmlElement el) {
+    switch (local) {
+      case 'barChart':
+      case 'bar3DChart':
+        final dir = OpenXmlUtils.attr(OpenXmlUtils.findChild(el, 'barDir'), 'val');
+        return dir == 'bar' ? ChartType.bar : ChartType.column;
+      case 'lineChart':
+      case 'line3DChart':
+        return ChartType.line;
+      case 'pieChart':
+      case 'pie3DChart':
+      case 'doughnutChart':
+        return ChartType.pie;
+      case 'areaChart':
+      case 'area3DChart':
+        return ChartType.area;
+      case 'scatterChart':
+        return ChartType.scatter;
+      case 'radarChart':
+        return ChartType.radar;
+      default:
+        return null;
+    }
+  }
+
+  /// Collects the cached point values from a `<c:cat>` or `<c:val>` reference,
+  /// ordered by their `idx`.
+  List<String> _readRefValues(XmlElement? ref) {
+    if (ref == null) return const [];
+    XmlElement? cache;
+    for (final child in ref.childElements) {
+      if (child.name.local == 'numRef' || child.name.local == 'strRef') {
+        cache =
+            OpenXmlUtils.findChild(child, 'numCache') ??
+            OpenXmlUtils.findChild(child, 'strCache');
+        break;
+      }
+      if (child.name.local == 'numLit' || child.name.local == 'strLit') {
+        cache = child;
+        break;
+      }
+    }
+    if (cache == null) return const [];
+    final points = OpenXmlUtils.findChildren(cache, 'pt');
+    final indexed = <int, String>{};
+    for (final pt in points) {
+      final idx = int.tryParse(OpenXmlUtils.attr(pt, 'idx') ?? '') ?? 0;
+      indexed[idx] = OpenXmlUtils.findChild(pt, 'v')?.innerText ?? '';
+    }
+    final sortedKeys = indexed.keys.toList()..sort();
+    return [for (final k in sortedKeys) indexed[k]!];
+  }
+
+  String _seriesName(XmlElement ser, int index) {
+    final tx = OpenXmlUtils.findChild(ser, 'tx');
+    final fromRef = _readRefValues(tx);
+    if (fromRef.isNotEmpty) return fromRef.first;
+    final v = OpenXmlUtils.findChild(tx, 'v');
+    if (v != null && v.innerText.isNotEmpty) return v.innerText;
+    return 'Series ${index + 1}';
+  }
+
+  Color? _seriesColor(XmlElement ser, ColorScheme scheme) {
+    final spPr = OpenXmlUtils.findChild(ser, 'spPr');
+    if (spPr == null) return null;
+    final solid = OpenXmlUtils.findChild(spPr, 'solidFill');
+    final fill = OpenXmlUtils.colorIn(solid, scheme: scheme);
+    if (fill != null) return fill;
+    final ln = OpenXmlUtils.findChild(spPr, 'ln');
+    return OpenXmlUtils.colorIn(
+      OpenXmlUtils.findChild(ln, 'solidFill'),
+      scheme: scheme,
+    );
+  }
+
+  String? _chartTitle(XmlElement? chart) {
+    if (OpenXmlUtils.attr(
+          OpenXmlUtils.findChild(chart, 'autoTitleDeleted'),
+          'val',
+        ) ==
+        '1') {
+      return null;
+    }
+    final title = OpenXmlUtils.findChild(chart, 'title');
+    if (title == null) return null;
+    // Title text lives in <c:tx><c:rich> as DrawingML <a:t> runs.
+    final buffer = StringBuffer();
+    for (final t in title.descendants.whereType<XmlElement>().where(
+      (e) => e.name.local == 't',
+    )) {
+      buffer.write(t.innerText);
+    }
+    final text = buffer.toString().trim();
+    if (text.isNotEmpty) return text;
+    final fromRef = _readRefValues(OpenXmlUtils.findChild(title, 'tx'));
+    return fromRef.isNotEmpty ? fromRef.first : null;
+  }
+
+  LegendPosition _legendPosition(String? val) {
+    switch (val) {
+      case 't':
+        return LegendPosition.top;
+      case 'b':
+        return LegendPosition.bottom;
+      case 'l':
+        return LegendPosition.left;
+      default:
+        return LegendPosition.right;
+    }
   }
 
   TableElement _parseTable(

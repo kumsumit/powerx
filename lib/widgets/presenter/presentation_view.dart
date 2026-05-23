@@ -3,7 +3,6 @@ import 'dart:io';
 import 'dart:math';
 import 'package:flutter/material.dart' hide SlideTransition;
 import 'package:flutter/services.dart';
-import 'dart:ui' as ui;
 import '../../models/presentation.dart';
 import '../../models/elements.dart';
 import '../../models/table.dart' as pt;
@@ -13,6 +12,7 @@ import '../tables/table_widget.dart';
 import '../../engine/charts/advanced_charts.dart';
 import '../animations/animation_engine.dart';
 import '../ink/ink_canvas.dart';
+import '../text/rich_paragraphs_view.dart';
 
 class PresentationView extends StatefulWidget {
   final Presentation presentation;
@@ -709,43 +709,10 @@ class _PresentationViewState extends State<PresentationView>
       child: ClipRect(
         child: Padding(
           padding: e.padding,
-          child: RichText(
-            overflow: TextOverflow.clip,
-            text: TextSpan(children: _buildTextSpans(e)),
-          ),
+          child: RichParagraphsView(e.paragraphs),
         ),
       ),
     );
-  }
-
-  List<InlineSpan> _buildTextSpans(TextElement e) {
-    final spans = <InlineSpan>[];
-    for (var i = 0; i < e.paragraphs.length; i++) {
-      final para = e.paragraphs[i];
-      for (final run in para.runs) {
-        spans.add(
-          TextSpan(
-            text: run.text,
-            style: TextStyle(
-              fontFamily: run.fontFamily,
-              fontSize: run.fontSize,
-              color: run.color,
-              fontWeight: run.bold ? FontWeight.bold : FontWeight.normal,
-              fontStyle: run.italic ? ui.FontStyle.italic : ui.FontStyle.normal,
-              decoration: run.underline
-                  ? TextDecoration.underline
-                  : run.strikethrough
-                  ? TextDecoration.lineThrough
-                  : TextDecoration.none,
-            ),
-          ),
-        );
-      }
-      if (i < e.paragraphs.length - 1) {
-        spans.add(const TextSpan(text: '\n'));
-      }
-    }
-    return spans;
   }
 
   BoxFit _mapFillMode(ImageFillMode mode) {

@@ -10,6 +10,7 @@ import '../../models/table.dart';
 import '../../models/chart.dart';
 import '../../models/text_styles.dart';
 import '../text/rich_text_editor.dart';
+import '../text/rich_paragraphs_view.dart';
 import '../shapes/shape_renderer.dart';
 import '../tables/table_widget.dart';
 import '../shapes/selection_handles.dart';
@@ -466,33 +467,7 @@ class _ElementRendererState extends State<_ElementRenderer> {
     return Container(
       color: element.fillColor,
       padding: element.padding,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: element.paragraphs.map((para) {
-          return RichText(
-            text: TextSpan(
-              children: para.runs.map((run) {
-                return TextSpan(
-                  text: run.text,
-                  style: TextStyle(
-                    fontFamily: run.fontFamily,
-                    fontSize: run.fontSize,
-                    color: run.color,
-                    fontWeight: run.bold ? FontWeight.bold : FontWeight.normal,
-                    fontStyle: run.italic ? FontStyle.italic : FontStyle.normal,
-                    decoration: run.underline
-                        ? TextDecoration.underline
-                        : run.strikethrough
-                        ? TextDecoration.lineThrough
-                        : TextDecoration.none,
-                  ),
-                );
-              }).toList(),
-            ),
-          );
-        }).toList(),
-      ),
+      child: RichParagraphsView(element.paragraphs),
     );
   }
 }
@@ -608,6 +583,32 @@ class _ChartPlaceholder extends StatelessWidget {
   }
 }
 
+/// Builds the read-only visual for an element, without the interactive
+/// selection/positioning wrappers. Used for group children, which are placed by
+/// their parent group's [Stack] and must not introduce a second [Positioned].
+Widget _buildElementVisual(SlideElement element) {
+  if (element is TextElement) {
+    return Container(
+      color: element.fillColor,
+      padding: element.padding,
+      child: RichParagraphsView(element.paragraphs),
+    );
+  } else if (element is ShapeElement) {
+    return ShapeRenderer(shape: element);
+  } else if (element is ImageElement) {
+    return _ImageElementRenderer(element: element);
+  } else if (element is TableElement) {
+    return TableWidget(table: element);
+  } else if (element is ChartElement) {
+    return _ChartPlaceholder(element: element);
+  } else if (element is GroupElement) {
+    return _GroupElementRenderer(element: element);
+  } else if (element is InkElement) {
+    return _InkElementRenderer(element: element);
+  }
+  return const SizedBox();
+}
+
 class _GroupElementRenderer extends StatelessWidget {
   final GroupElement element;
   const _GroupElementRenderer({required this.element});
@@ -622,11 +623,9 @@ class _GroupElementRenderer extends StatelessWidget {
           top: child.position.dy - element.position.dy,
           width: child.size.width,
           height: child.size.height,
-          child: _ElementRenderer(
-            element: child,
-            zoom: 1,
-            isSelected: false,
-            isMultiSelected: false,
+          child: Transform.rotate(
+            angle: child.rotation * pi / 180,
+            child: _buildElementVisual(child),
           ),
         );
       }).toList(),

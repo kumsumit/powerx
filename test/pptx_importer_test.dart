@@ -5,6 +5,7 @@ import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:powerx/engine/pptx_importer.dart';
 import 'package:powerx/models/elements.dart';
+import 'package:powerx/models/chart.dart';
 
 void main() {
   test('imports slides through relative presentation relationships', () async {
@@ -264,6 +265,94 @@ void main() {
       expect(group.children.first.size.width, closeTo(48, 0.01));
     },
   );
+
+  test('parses an embedded chart part into chart data', () async {
+    final archive = Archive()
+      ..addFile(
+        ArchiveFile.string('ppt/presentation.xml', '''
+<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <p:sldSz cx="9144000" cy="6858000"/>
+  <p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst>
+</p:presentation>
+'''),
+      )
+      ..addFile(
+        ArchiveFile.string('ppt/_rels/presentation.xml.rels', '''
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>
+</Relationships>
+'''),
+      )
+      ..addFile(
+        ArchiveFile.string('ppt/slides/slide1.xml', '''
+<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <p:cSld><p:spTree>
+    <p:graphicFrame>
+      <p:nvGraphicFramePr><p:cNvPr id="5" name="Chart 1"/></p:nvGraphicFramePr>
+      <p:xfrm><a:off x="0" y="0"/><a:ext cx="4572000" cy="2743200"/></p:xfrm>
+      <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart">
+        <c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" r:id="rIdC"/>
+      </a:graphicData></a:graphic>
+    </p:graphicFrame>
+  </p:spTree></p:cSld>
+</p:sld>
+'''),
+      )
+      ..addFile(
+        ArchiveFile.string('ppt/slides/_rels/slide1.xml.rels', '''
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rIdC" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../charts/chart1.xml"/>
+</Relationships>
+'''),
+      )
+      ..addFile(
+        ArchiveFile.string('ppt/charts/chart1.xml', '''
+<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <c:chart>
+    <c:title><c:tx><c:rich><a:p><a:r><a:t>Sales</a:t></a:r></a:p></c:rich></c:tx></c:title>
+    <c:autoTitleDeleted val="0"/>
+    <c:plotArea>
+      <c:barChart>
+        <c:barDir val="col"/>
+        <c:ser>
+          <c:idx val="0"/>
+          <c:tx><c:strRef><c:strCache><c:pt idx="0"><c:v>2023</c:v></c:pt></c:strCache></c:strRef></c:tx>
+          <c:cat><c:strRef><c:strCache><c:pt idx="0"><c:v>Q1</c:v></c:pt><c:pt idx="1"><c:v>Q2</c:v></c:pt></c:strCache></c:strRef></c:cat>
+          <c:val><c:numRef><c:numCache><c:pt idx="0"><c:v>10</c:v></c:pt><c:pt idx="1"><c:v>20</c:v></c:pt></c:numCache></c:numRef></c:val>
+        </c:ser>
+        <c:ser>
+          <c:idx val="1"/>
+          <c:tx><c:strRef><c:strCache><c:pt idx="0"><c:v>2024</c:v></c:pt></c:strCache></c:strRef></c:tx>
+          <c:val><c:numRef><c:numCache><c:pt idx="0"><c:v>15</c:v></c:pt><c:pt idx="1"><c:v>25</c:v></c:pt></c:numCache></c:numRef></c:val>
+        </c:ser>
+      </c:barChart>
+    </c:plotArea>
+    <c:legend><c:legendPos val="b"/></c:legend>
+  </c:chart>
+</c:chartSpace>
+'''),
+      );
+
+    final file = File('${Directory.systemTemp.path}/powerx_chart_test.pptx');
+    await file.writeAsBytes(ZipEncoder().encode(archive));
+    addTearDown(() {
+      if (file.existsSync()) file.deleteSync();
+    });
+
+    final pres = await PptxImporter().import(file.path);
+    final chart = pres.activeSlide.elements.whereType<ChartElement>().single;
+
+    expect(chart.type, ChartType.column);
+    expect(chart.title, 'Sales');
+    expect(chart.hasTitle, isTrue);
+    expect(chart.hasLegend, isTrue);
+    expect(chart.legendPosition, LegendPosition.bottom);
+    expect(chart.data.categories, ['Q1', 'Q2']);
+    expect(chart.data.series, hasLength(2));
+    expect(chart.data.series.first.name, '2023');
+    expect(chart.data.series.first.values, [10, 20]);
+    expect(chart.data.series[1].values, [15, 25]);
+  });
 
   test('returns a blank slide when a deck has no slide ids', () async {
     final archive = Archive()
