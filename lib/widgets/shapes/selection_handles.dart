@@ -5,6 +5,7 @@ import '../../models/elements.dart';
 class SelectionHandles extends StatelessWidget {
   final SlideElement element;
   final double zoom;
+  final Offset overlayOffset;
   final Function(Size newSize, Offset newPosition) onResize;
   final Function(double newRotation)? onRotate;
 
@@ -12,6 +13,7 @@ class SelectionHandles extends StatelessWidget {
     super.key,
     required this.element,
     required this.zoom,
+    this.overlayOffset = Offset.zero,
     required this.onResize,
     this.onRotate,
   });
@@ -49,8 +51,8 @@ class SelectionHandles extends StatelessWidget {
         ),
         // Line connecting element to rotation handle
         Positioned(
-          left: element.size.width / 2 - 0.5,
-          top: -20,
+          left: overlayOffset.dx + element.size.width / 2 - 0.5,
+          top: overlayOffset.dy - 20,
           child: Container(
             width: 1,
             height: 20,
@@ -59,45 +61,56 @@ class SelectionHandles extends StatelessWidget {
         ),
         // Rotation handle
         Positioned(
-          left: element.size.width / 2 - 10,
-          top: -30,
-          child: GestureDetector(
-            onPanUpdate: (details) {
-              if (onRotate != null) {
+          left: overlayOffset.dx + element.size.width / 2 - 14,
+          top: overlayOffset.dy - 34,
+          child: MouseRegion(
+            cursor: SystemMouseCursors.grab,
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onPanUpdate: (details) {
+                if (onRotate == null) return;
+
                 final renderBox = context.findRenderObject() as RenderBox?;
-                if (renderBox != null) {
-                  final centerGlobal = renderBox.localToGlobal(
-                    Offset(element.size.width / 2, element.size.height / 2),
-                  );
-                  final diff = details.globalPosition - centerGlobal;
-                  double angleRad = atan2(diff.dy, diff.dx);
-                  double rotation = (angleRad + pi / 2) * 180 / pi;
-                  rotation = (rotation % 360 + 360) % 360;
-                  onRotate!(rotation);
-                }
-              }
-            },
-            child: Container(
-              width: 20,
-              height: 20,
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black12,
-                    blurRadius: 4,
-                    offset: Offset(0, 2),
+                if (renderBox == null) return;
+
+                final centerGlobal = renderBox.localToGlobal(
+                  overlayOffset +
+                      Offset(element.size.width / 2, element.size.height / 2),
+                );
+                final diff = details.globalPosition - centerGlobal;
+                double angleRad = atan2(diff.dy, diff.dx);
+                double rotation = (angleRad + pi / 2) * 180 / pi;
+                rotation = (rotation % 360 + 360) % 360;
+                onRotate!(rotation);
+              },
+              child: SizedBox(
+                width: 28,
+                height: 28,
+                child: Center(
+                  child: Container(
+                    width: 20,
+                    height: 20,
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black12,
+                          blurRadius: 4,
+                          offset: Offset(0, 2),
+                        ),
+                      ],
+                      border: Border.fromBorderSide(
+                        BorderSide(color: Color(0xFF4472C4), width: 1.5),
+                      ),
+                    ),
+                    child: const Icon(
+                      Icons.rotate_right,
+                      size: 11,
+                      color: Color(0xFF4472C4),
+                    ),
                   ),
-                ],
-                border: Border.fromBorderSide(
-                  BorderSide(color: Color(0xFF4472C4), width: 1.5),
                 ),
-              ),
-              child: const Icon(
-                Icons.rotate_right,
-                size: 11,
-                color: Color(0xFF4472C4),
               ),
             ),
           ),
@@ -108,41 +121,41 @@ class SelectionHandles extends StatelessWidget {
 
   Widget _buildHandle(HandlePosition pos, Offset position, Size size) {
     final handleSize = 8.0 / zoom;
-    final hitSize = 20.0 / zoom;
+    final hitSize = 28.0 / zoom;
     late final double left, top;
 
     switch (pos) {
       case HandlePosition.topLeft:
-        left = -hitSize / 2;
-        top = -hitSize / 2;
+        left = overlayOffset.dx - hitSize / 2;
+        top = overlayOffset.dy - hitSize / 2;
         break;
       case HandlePosition.topCenter:
-        left = size.width / 2 - hitSize / 2;
-        top = -hitSize / 2;
+        left = overlayOffset.dx + size.width / 2 - hitSize / 2;
+        top = overlayOffset.dy - hitSize / 2;
         break;
       case HandlePosition.topRight:
-        left = size.width - hitSize / 2;
-        top = -hitSize / 2;
+        left = overlayOffset.dx + size.width - hitSize / 2;
+        top = overlayOffset.dy - hitSize / 2;
         break;
       case HandlePosition.middleLeft:
-        left = -hitSize / 2;
-        top = size.height / 2 - hitSize / 2;
+        left = overlayOffset.dx - hitSize / 2;
+        top = overlayOffset.dy + size.height / 2 - hitSize / 2;
         break;
       case HandlePosition.middleRight:
-        left = size.width - hitSize / 2;
-        top = size.height / 2 - hitSize / 2;
+        left = overlayOffset.dx + size.width - hitSize / 2;
+        top = overlayOffset.dy + size.height / 2 - hitSize / 2;
         break;
       case HandlePosition.bottomLeft:
-        left = -hitSize / 2;
-        top = size.height - hitSize / 2;
+        left = overlayOffset.dx - hitSize / 2;
+        top = overlayOffset.dy + size.height - hitSize / 2;
         break;
       case HandlePosition.bottomCenter:
-        left = size.width / 2 - hitSize / 2;
-        top = size.height - hitSize / 2;
+        left = overlayOffset.dx + size.width / 2 - hitSize / 2;
+        top = overlayOffset.dy + size.height - hitSize / 2;
         break;
       case HandlePosition.bottomRight:
-        left = size.width - hitSize / 2;
-        top = size.height - hitSize / 2;
+        left = overlayOffset.dx + size.width - hitSize / 2;
+        top = overlayOffset.dy + size.height - hitSize / 2;
         break;
     }
 
@@ -152,7 +165,9 @@ class SelectionHandles extends StatelessWidget {
       child: MouseRegion(
         cursor: _getCursor(pos),
         child: GestureDetector(
-          behavior: HitTestBehavior.translucent,
+          // Opaque so a resize gesture is consumed here and never falls through
+          // to the move detector underneath.
+          behavior: HitTestBehavior.opaque,
           // delta is already in unscaled slide coords (inside Transform.scale).
           onPanUpdate: (details) => _handleResize(pos, details.delta),
           child: SizedBox(
@@ -178,31 +193,31 @@ class SelectionHandles extends StatelessWidget {
   }
 
   Widget _buildEdge(HandlePosition pos, Size size) {
-    final edgeHitSize = 12.0 / zoom;
+    final edgeHitSize = 28.0 / zoom;
     late final double left, top, width, height;
 
     switch (pos) {
       case HandlePosition.topCenter:
-        left = edgeHitSize / 2;
-        top = -edgeHitSize / 2;
+        left = overlayOffset.dx + edgeHitSize / 2;
+        top = overlayOffset.dy - edgeHitSize / 2;
         width = max(0, size.width - edgeHitSize);
         height = edgeHitSize;
         break;
       case HandlePosition.bottomCenter:
-        left = edgeHitSize / 2;
-        top = size.height - edgeHitSize / 2;
+        left = overlayOffset.dx + edgeHitSize / 2;
+        top = overlayOffset.dy + size.height - edgeHitSize / 2;
         width = max(0, size.width - edgeHitSize);
         height = edgeHitSize;
         break;
       case HandlePosition.middleLeft:
-        left = -edgeHitSize / 2;
-        top = edgeHitSize / 2;
+        left = overlayOffset.dx - edgeHitSize / 2;
+        top = overlayOffset.dy + edgeHitSize / 2;
         width = edgeHitSize;
         height = max(0, size.height - edgeHitSize);
         break;
       case HandlePosition.middleRight:
-        left = size.width - edgeHitSize / 2;
-        top = edgeHitSize / 2;
+        left = overlayOffset.dx + size.width - edgeHitSize / 2;
+        top = overlayOffset.dy + edgeHitSize / 2;
         width = edgeHitSize;
         height = max(0, size.height - edgeHitSize);
         break;
@@ -221,7 +236,9 @@ class SelectionHandles extends StatelessWidget {
       child: MouseRegion(
         cursor: _getCursor(pos),
         child: GestureDetector(
-          behavior: HitTestBehavior.translucent,
+          // Opaque so a resize gesture is consumed here and never falls through
+          // to the move detector underneath.
+          behavior: HitTestBehavior.opaque,
           onPanUpdate: (details) => _handleResize(pos, details.delta),
           child: const SizedBox.expand(),
         ),
@@ -231,7 +248,7 @@ class SelectionHandles extends StatelessWidget {
 
   void _handleResize(HandlePosition pos, Offset delta) {
     const minSize = 10.0;
-    
+
     final double rad = element.rotation * pi / 180;
     final double cosTheta = cos(rad);
     final double sinTheta = sin(rad);
@@ -246,13 +263,16 @@ class SelectionHandles extends StatelessWidget {
 
     final double w = element.size.width;
     final double h = element.size.height;
-    final center = Offset(element.position.dx + w / 2, element.position.dy + h / 2);
+    final center = Offset(
+      element.position.dx + w / 2,
+      element.position.dy + h / 2,
+    );
 
     // Determine the fixed point and size changes based on the handle position and local delta
     late final Offset localFixed;
     double newW = w;
     double newH = h;
-    
+
     switch (pos) {
       case HandlePosition.topLeft:
         newW = max(minSize, w - delta.dx);

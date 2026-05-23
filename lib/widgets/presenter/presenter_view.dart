@@ -102,8 +102,10 @@ class _PresenterViewState extends State<PresenterView> {
                           fit: BoxFit.contain,
                           child: Container(
                             width: widget.presentation.settings.slideSize.width,
-                            height: widget.presentation.settings.slideSize.height,
-                            color: slide.backgroundColorOverride ?? Colors.white,
+                            height:
+                                widget.presentation.settings.slideSize.height,
+                            color:
+                                slide.backgroundColorOverride ?? Colors.white,
                             child: Stack(
                               children: slide.elements
                                   .map((e) => _buildElement(e))
@@ -262,47 +264,18 @@ class _PresenterViewState extends State<PresenterView> {
     Widget elementWidget;
 
     if (e is TextElement) {
-      elementWidget = Container(
-        color: e.fillColor,
-        padding: e.padding,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: e.paragraphs.map((para) {
-            return RichText(
-              text: TextSpan(
-                children: para.runs.map((run) {
-                  return TextSpan(
-                    text: run.text,
-                    style: TextStyle(
-                      fontFamily: run.fontFamily,
-                      fontSize: run.fontSize,
-                      color: run.color,
-                      fontWeight: run.bold ? FontWeight.bold : FontWeight.normal,
-                      fontStyle: run.italic ? ui.FontStyle.italic : ui.FontStyle.normal,
-                      decoration: run.underline
-                          ? TextDecoration.underline
-                          : run.strikethrough
-                              ? TextDecoration.lineThrough
-                              : TextDecoration.none,
-                    ),
-                  );
-                }).toList(),
-              ),
-            );
-          }).toList(),
-        ),
-      );
+      elementWidget = _buildTextElement(e);
     } else if (e is ShapeElement) {
       elementWidget = ShapeRenderer(shape: e);
     } else if (e is ImageElement) {
-      elementWidget = e.imagePath.isEmpty
+      final imageFile = File(e.imagePath);
+      elementWidget = e.imagePath.isEmpty || !imageFile.existsSync()
           ? Container(
               color: Colors.grey[300],
               child: const Center(child: Icon(Icons.image, color: Colors.grey)),
             )
           : Image.file(
-              File(e.imagePath),
+              imageFile,
               fit: BoxFit.fill,
               width: e.size.width,
               height: e.size.height,
@@ -365,6 +338,51 @@ class _PresenterViewState extends State<PresenterView> {
         child: elementWidget,
       ),
     );
+  }
+
+  Widget _buildTextElement(TextElement e) {
+    return Container(
+      color: e.fillColor,
+      child: ClipRect(
+        child: Padding(
+          padding: e.padding,
+          child: RichText(
+            overflow: TextOverflow.clip,
+            text: TextSpan(children: _buildTextSpans(e)),
+          ),
+        ),
+      ),
+    );
+  }
+
+  List<InlineSpan> _buildTextSpans(TextElement e) {
+    final spans = <InlineSpan>[];
+    for (var i = 0; i < e.paragraphs.length; i++) {
+      final para = e.paragraphs[i];
+      for (final run in para.runs) {
+        spans.add(
+          TextSpan(
+            text: run.text,
+            style: TextStyle(
+              fontFamily: run.fontFamily,
+              fontSize: run.fontSize,
+              color: run.color,
+              fontWeight: run.bold ? FontWeight.bold : FontWeight.normal,
+              fontStyle: run.italic ? ui.FontStyle.italic : ui.FontStyle.normal,
+              decoration: run.underline
+                  ? TextDecoration.underline
+                  : run.strikethrough
+                  ? TextDecoration.lineThrough
+                  : TextDecoration.none,
+            ),
+          ),
+        );
+      }
+      if (i < e.paragraphs.length - 1) {
+        spans.add(const TextSpan(text: '\n'));
+      }
+    }
+    return spans;
   }
 
   AdvancedChartType _mapChartType(ChartType t) {

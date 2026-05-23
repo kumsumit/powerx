@@ -29,7 +29,9 @@ class _RichTextEditorState extends State<RichTextEditor> {
     super.initState();
     _paragraphs = widget.paragraphs.map((p) => p.copyWith()).toList();
     if (_paragraphs.isEmpty) {
-      _paragraphs = [const RichParagraph(runs: [TextRun(text: '')])];
+      _paragraphs = [
+        const RichParagraph(runs: [TextRun(text: '')]),
+      ];
     }
     _updateController();
     _focusNode.requestFocus();
@@ -47,10 +49,13 @@ class _RichTextEditorState extends State<RichTextEditor> {
 
   @override
   Widget build(BuildContext context) {
-    final currentRun = _paragraphs.isNotEmpty && _paragraphs.first.runs.isNotEmpty
+    final currentRun =
+        _paragraphs.isNotEmpty && _paragraphs.first.runs.isNotEmpty
         ? _paragraphs.first.runs.first
         : const TextRun();
-    final firstPara = _paragraphs.isNotEmpty ? _paragraphs.first : const RichParagraph();
+    final firstPara = _paragraphs.isNotEmpty
+        ? _paragraphs.first
+        : const RichParagraph();
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -136,12 +141,14 @@ class _RichTextEditorState extends State<RichTextEditor> {
               fontSize: currentRun.fontSize,
               color: currentRun.color,
               fontWeight: currentRun.bold ? FontWeight.bold : FontWeight.normal,
-              fontStyle: currentRun.italic ? FontStyle.italic : FontStyle.normal,
+              fontStyle: currentRun.italic
+                  ? FontStyle.italic
+                  : FontStyle.normal,
               decoration: currentRun.underline
                   ? TextDecoration.underline
                   : currentRun.strikethrough
-                      ? TextDecoration.lineThrough
-                      : TextDecoration.none,
+                  ? TextDecoration.lineThrough
+                  : TextDecoration.none,
             ),
             onChanged: _onTextChanged,
             onEditingComplete: widget.onDone,
@@ -151,7 +158,12 @@ class _RichTextEditorState extends State<RichTextEditor> {
     );
   }
 
-  void _toggleFormat({bool? bold, bool? italic, bool? underline, bool? strikethrough}) {
+  void _toggleFormat({
+    bool? bold,
+    bool? italic,
+    bool? underline,
+    bool? strikethrough,
+  }) {
     if (_paragraphs.isEmpty || _paragraphs.first.runs.isEmpty) return;
 
     final run = _paragraphs.first.runs.first;
@@ -163,12 +175,16 @@ class _RichTextEditorState extends State<RichTextEditor> {
     );
 
     _paragraphs = _paragraphs.map((para) {
-      final newRuns = para.runs.map((r) => r.copyWith(
-        bold: newRun.bold,
-        italic: newRun.italic,
-        underline: newRun.underline,
-        strikethrough: newRun.strikethrough,
-      )).toList();
+      final newRuns = para.runs
+          .map(
+            (r) => r.copyWith(
+              bold: newRun.bold,
+              italic: newRun.italic,
+              underline: newRun.underline,
+              strikethrough: newRun.strikethrough,
+            ),
+          )
+          .toList();
       return para.copyWith(runs: newRuns);
     }).toList();
 
@@ -178,9 +194,7 @@ class _RichTextEditorState extends State<RichTextEditor> {
 
   void _setAlignment(TextAlign align) {
     _paragraphs = _paragraphs.map((para) {
-      return para.copyWith(
-        style: para.style.copyWith(alignment: align),
-      );
+      return para.copyWith(style: para.style.copyWith(alignment: align));
     }).toList();
     setState(() {});
     _notifyChange();
@@ -213,7 +227,9 @@ class _RichTextEditorState extends State<RichTextEditor> {
     final baseRun = _paragraphs.isNotEmpty && _paragraphs.first.runs.isNotEmpty
         ? _paragraphs.first.runs.first
         : const TextRun();
-    final baseStyle = _paragraphs.isNotEmpty ? _paragraphs.first.style : const ParagraphStyle();
+    final baseStyle = _paragraphs.isNotEmpty
+        ? _paragraphs.first.style
+        : const ParagraphStyle();
 
     _paragraphs = lines.map((line) {
       return RichParagraph(
@@ -237,7 +253,11 @@ class _FormatButton extends StatelessWidget {
   final bool isActive;
   final VoidCallback onTap;
 
-  const _FormatButton({required this.icon, required this.isActive, required this.onTap});
+  const _FormatButton({
+    required this.icon,
+    required this.isActive,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -250,7 +270,11 @@ class _FormatButton extends StatelessWidget {
           color: isActive ? const Color(0xFFB7472A) : Colors.transparent,
           borderRadius: BorderRadius.circular(4),
         ),
-        child: Icon(icon, size: 18, color: isActive ? Colors.white : Colors.black87),
+        child: Icon(
+          icon,
+          size: 18,
+          color: isActive ? Colors.white : Colors.black87,
+        ),
       ),
     );
   }
@@ -264,16 +288,58 @@ class _FontSizeDropdown extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    const sizes = [
+      8,
+      9,
+      10,
+      11,
+      12,
+      14,
+      16,
+      18,
+      20,
+      22,
+      24,
+      28,
+      32,
+      36,
+      40,
+      44,
+      48,
+      54,
+      60,
+      66,
+      72,
+      80,
+      96,
+    ];
+
     return SizedBox(
       width: 60,
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<double>(
-          value: value,
-          isDense: true,
-          items: [8, 9, 10, 11, 12, 14, 16, 18, 20, 22, 24, 28, 32, 36, 40, 44, 48, 54, 60, 66, 72, 80, 96]
-              .map((s) => DropdownMenuItem(value: s.toDouble(), child: Text('$s')))
-              .toList(),
-          onChanged: onChanged,
+      child: PopupMenuButton<double>(
+        initialValue: value,
+        tooltip: 'Font size',
+        constraints: const BoxConstraints(maxHeight: 280, minWidth: 60),
+        onSelected: onChanged,
+        itemBuilder: (context) {
+          return sizes
+              .map(
+                (s) => PopupMenuItem<double>(
+                  value: s.toDouble(),
+                  child: Text('$s'),
+                ),
+              )
+              .toList();
+        },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Expanded(child: Text(value.toInt().toString())),
+              const Icon(Icons.arrow_drop_down, size: 18),
+            ],
+          ),
         ),
       ),
     );

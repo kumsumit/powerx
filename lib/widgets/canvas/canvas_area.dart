@@ -87,7 +87,12 @@ class _CanvasAreaState extends State<CanvasArea> {
                             scale: widget.zoom,
                             alignment: Alignment.topLeft,
                             child: GestureDetector(
-                              onTapDown: (details) {
+                              // onTapUp (not onTapDown) so this only fires for a
+                              // clean tap that wins the gesture arena. A press
+                              // that turns into a drag (moving or resizing an
+                              // element) lets the element's pan recognizer win,
+                              // so the canvas never deselects mid-drag.
+                              onTapUp: (details) {
                                 _handleCanvasTap(
                                   context,
                                   details.localPosition,
@@ -296,6 +301,8 @@ class _ElementRenderer extends StatefulWidget {
 }
 
 class _ElementRendererState extends State<_ElementRenderer> {
+  static const double _interactionPadding = 40.0;
+  static const double _moveInset = 14.0;
   bool _isEditing = false;
 
   @override
@@ -332,79 +339,111 @@ class _ElementRendererState extends State<_ElementRenderer> {
       content = const SizedBox();
     }
 
+    final interactionPadding = (widget.isSelected && !_isEditing)
+        ? _interactionPadding / widget.zoom
+        : 0.0;
+    final moveInset = _moveInset / widget.zoom;
+
     return Positioned(
-      left: element.position.dx,
-      top: element.position.dy,
-      width: element.size.width,
-      height: element.size.height,
-      child: GestureDetector(
-        behavior: HitTestBehavior.translucent,
-        onTap: () {
-          if (!widget.isSelected) {
-            cubit.selectElement(element.id);
-          }
-        },
-        onDoubleTap: () {
-          if (element is TextElement && !_isEditing) {
-            if (!widget.isSelected) {
-              cubit.selectElement(element.id);
-            }
-            setState(() => _isEditing = true);
-          }
-        },
-        onPanStart: !element.isLocked && !_isEditing
-            ? (_) {
-                if (!widget.isSelected) {
-                  cubit.selectElement(element.id);
-                }
-              }
-            : null,
-        onPanUpdate: !element.isLocked && !_isEditing
-            ? (details) {
-                // delta is already in unscaled slide coords (inside Transform.scale).
-                cubit.moveElement(element.id, details.delta);
-              }
-            : null,
-        child: Transform.rotate(
-          angle: element.rotation * pi / 180,
-          alignment: Alignment.center,
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              content,
-              if (widget.isSelected && !_isEditing)
-                Positioned.fill(
-                  child: SelectionHandles(
-                    element: element,
-                    zoom: widget.zoom,
-                    onResize: (newSize, newPos) => cubit.resizeElement(
-                      element.id,
-                      newSize,
-                      newPosition: newPos,
-                    ),
-                    onRotate: (newRotation) => cubit.rotateElement(
-                      element.id,
-                      newRotation,
-                    ),
-                  ),
+      left: element.position.dx - interactionPadding,
+      top: element.position.dy - interactionPadding,
+      width: element.size.width + interactionPadding * 2,
+      height: element.size.height + interactionPadding * 2,
+      child: Transform.rotate(
+        angle: element.rotation * pi / 180,
+        alignment: Alignment.center,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Positioned(
+              left: interactionPadding,
+              top: interactionPadding,
+              width: element.size.width,
+              height: element.size.height,
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onTap: () {
+                  if (!widget.isSelected) {
+                    cubit.selectElement(element.id);
+                  }
+                },
+                onDoubleTap: () {
+                  if (element is TextElement && !_isEditing) {
+                    if (!widget.isSelected) {
+                      cubit.selectElement(element.id);
+                    }
+                    setState(() => _isEditing = true);
+                  }
+                },
+                onPanStart:
+                    !widget.isSelected && !element.isLocked && !_isEditing
+                    ? (_) => cubit.selectElement(element.id)
+                    : null,
+                onPanUpdate:
+                    !widget.isSelected && !element.isLocked && !_isEditing
+                    ? (details) {
+                        // delta is already in unscaled slide coords (inside Transform.scale).
+                        cubit.moveElement(element.id, details.delta);
+                      }
+                    : null,
+                child: content,
+              ),
+            ),
+            if (widget.isSelected && !_isEditing && !element.isLocked)
+              Positioned(
+                left: interactionPadding + moveInset,
+                top: interactionPadding + moveInset,
+                width: max(0, element.size.width - moveInset * 2),
+                height: max(0, element.size.height - moveInset * 2),
+                child: GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onDoubleTap: () {
+                    if (element is TextElement) {
+                      setState(() => _isEditing = true);
+                    }
+                  },
+                  onPanUpdate: (details) {
+                    // delta is already in unscaled slide coords (inside Transform.scale).
+                    cubit.moveElement(element.id, details.delta);
+                  },
+                  child: const SizedBox.expand(),
                 ),
-              if (widget.isSelected || widget.isMultiSelected)
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: Container(
-                      decoration: BoxDecoration(
-                        border: Border.all(
-                          color: widget.isSelected
-                              ? const Color(0xFF4472C4)
-                              : const Color(0xFFFFA500),
-                          width: 2,
-                        ),
+              ),
+            if (widget.isSelected && !_isEditing)
+              Positioned.fill(
+                child: SelectionHandles(
+                  element: element,
+                  zoom: widget.zoom,
+                  overlayOffset: Offset(interactionPadding, interactionPadding),
+                  onResize: (newSize, newPos) => cubit.resizeElement(
+                    element.id,
+                    newSize,
+                    newPosition: newPos,
+                  ),
+                  onRotate: (newRotation) =>
+                      cubit.rotateElement(element.id, newRotation),
+                ),
+              ),
+            if (widget.isSelected || widget.isMultiSelected)
+              Positioned(
+                left: interactionPadding,
+                top: interactionPadding,
+                width: element.size.width,
+                height: element.size.height,
+                child: IgnorePointer(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      border: Border.all(
+                        color: widget.isSelected
+                            ? const Color(0xFF4472C4)
+                            : const Color(0xFFFFA500),
+                        width: 2,
                       ),
                     ),
                   ),
                 ),
-            ],
-          ),
+              ),
+          ],
         ),
       ),
     );
@@ -464,14 +503,15 @@ class _ImageElementRenderer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (element.imagePath.isEmpty) {
-      return Container(
-        color: Colors.grey[300],
-        child: const Center(child: Icon(Icons.image, color: Colors.grey)),
+    final imageFile = File(element.imagePath);
+    if (element.imagePath.isEmpty || !imageFile.existsSync()) {
+      return _ImagePlaceholder(
+        width: element.size.width,
+        height: element.size.height,
       );
     }
     return Image.file(
-      File(element.imagePath),
+      imageFile,
       fit: _mapFillMode(element.fillMode),
       width: element.size.width,
       height: element.size.height,
@@ -491,6 +531,23 @@ class _ImageElementRenderer extends StatelessWidget {
       case ImageFillMode.center:
         return BoxFit.none;
     }
+  }
+}
+
+class _ImagePlaceholder extends StatelessWidget {
+  final double? width;
+  final double? height;
+
+  const _ImagePlaceholder({this.width, this.height});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: width,
+      height: height,
+      color: Colors.grey[300],
+      child: const Center(child: Icon(Icons.image, color: Colors.grey)),
+    );
   }
 }
 

@@ -79,7 +79,8 @@ class EditorShell extends StatelessWidget {
             EditorShortcutActivators.backspace: cubit.deleteSelected,
             EditorShortcutActivators.escape: () => cubit.selectElement(null),
             EditorShortcutActivators.f5: cubit.startPresentation,
-            EditorShortcutActivators.shiftF5: () => cubit.startPresentation(presenterView: true),
+            EditorShortcutActivators.shiftF5: () =>
+                cubit.startPresentation(presenterView: true),
           },
           child: Scaffold(
             body: Column(
@@ -89,9 +90,17 @@ class EditorShell extends StatelessWidget {
                   child: Row(
                     children: [
                       const SizedBox(width: 260, child: SlideThumbnailPanel()),
-                      VerticalDivider(width: 1, thickness: 1, color: Colors.grey.shade200),
+                      VerticalDivider(
+                        width: 1,
+                        thickness: 1,
+                        color: Colors.grey.shade200,
+                      ),
                       Expanded(child: CanvasArea(zoom: state.canvasZoom)),
-                      VerticalDivider(width: 1, thickness: 1, color: Colors.grey.shade200),
+                      VerticalDivider(
+                        width: 1,
+                        thickness: 1,
+                        color: Colors.grey.shade200,
+                      ),
                       const SizedBox(width: 300, child: PropertiesPanel()),
                     ],
                   ),
@@ -137,24 +146,35 @@ class StatusBar extends StatelessWidget {
           const VerticalDivider(),
           SizedBox(
             width: 90,
-            child: DropdownButtonHideUnderline(
-              child: DropdownButton<double>(
-                value: state.canvasZoom,
-                isDense: true,
-                items: (() {
-                  final list = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0];
-                  if (!list.contains(state.canvasZoom)) {
-                    list.add(state.canvasZoom);
-                    list.sort();
-                  }
-                  return list.map((z) {
-                    return DropdownMenuItem(
-                      value: z,
-                      child: Text('${(z * 100).toInt()}%'),
-                    );
-                  }).toList();
-                })(),
-                onChanged: (v) => v != null ? cubit.setZoom(v) : null,
+            child: PopupMenuButton<double>(
+              initialValue: state.canvasZoom,
+              tooltip: 'Zoom',
+              constraints: const BoxConstraints(maxHeight: 280, minWidth: 90),
+              onSelected: cubit.setZoom,
+              itemBuilder: (context) {
+                final list = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0];
+                if (!list.contains(state.canvasZoom)) {
+                  list.add(state.canvasZoom);
+                  list.sort();
+                }
+                return list.map((z) {
+                  return PopupMenuItem<double>(
+                    value: z,
+                    child: Text('${(z * 100).toInt()}%'),
+                  );
+                }).toList();
+              },
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                child: Row(
+                  mainAxisSize: MainAxisSize.max,
+                  children: [
+                    Expanded(
+                      child: Text('${(state.canvasZoom * 100).toInt()}%'),
+                    ),
+                    const Icon(Icons.arrow_drop_down, size: 18),
+                  ],
+                ),
               ),
             ),
           ),

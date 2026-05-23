@@ -6,237 +6,336 @@ import 'package:uuid/uuid.dart';
 import '../models/presentation.dart';
 import '../models/elements.dart';
 import '../models/text_styles.dart';
-import '../models/slide_master.dart';
 import '../models/table.dart';
 import '../models/chart.dart';
 import '../models/animation.dart';
 import '../models/theme.dart';
 import 'openxml_utils.dart';
 
+/// Imports a `.pptx` by resolving the PresentationML inheritance chain the way
+/// PowerPoint does: each slide inherits geometry, text styling, colors and
+/// background from its slide layout, which inherits from a slide master, which
+/// references a theme. Inherited values are baked into concrete [SlideElement]s
+/// so the existing flat renderer can draw them correctly.
 class PptxImporter {
   final _uuid = const Uuid();
+
+  late Map<String, Map<String, String>> _relsMap;
+  late Map<String, String> _mediaFiles;
+  final Map<String, _Master> _masters = {};
+  final Map<String, _Layout> _layouts = {};
+
+  static const _defaultScheme = ColorScheme.office();
+  static const _defaultFonts = FontScheme();
 
   Future<Presentation> import(String filePath) async {
     final bytes = await File(filePath).readAsBytes();
     final archive = ZipDecoder().decodeBytes(bytes);
 
-    // Build relationship map
-    final relsMap = _buildRelsMap(archive);
+    _relsMap = _buildRelsMap(archive);
+    _mediaFiles = await _extractMediaFiles(archive);
 
-    // Parse presentation.xml
     final presEntry = archive.findFile('ppt/presentation.xml');
     if (presEntry == null) throw Exception('Invalid PPTX: no presentation.xml');
 
     final presDoc = XmlDocument.parse(String.fromCharCodes(presEntry.content));
     final presRoot = presDoc.rootElement;
 
-    // Parse slide size
     final sldSz = OpenXmlUtils.findChild(presRoot, 'sldSz');
     final cx = OpenXmlUtils.attr(sldSz, 'cx');
     final cy = OpenXmlUtils.attr(sldSz, 'cy');
     final slideSize = Size(
-      cx != null ? OpenXmlUtils.parseEmu(cx).toDouble() : 960,
-      cy != null ? OpenXmlUtils.parseEmu(cy).toDouble() : 540,
+      cx != null ? OpenXmlUtils.parseEmuD(cx) : 960,
+      cy != null ? OpenXmlUtils.parseEmuD(cy) : 540,
     );
 
-    // Parse slide list
+    // Masters first (each carries its theme), then layouts (which reference a
+    // master), so slides can resolve the full chain.
+    _parseMasters(archive);
+    _parseLayouts(archive);
+
     final slideIdList = OpenXmlUtils.findChild(presRoot, 'sldIdLst');
     final slideIds = slideIdList != null
         ? OpenXmlUtils.findChildren(slideIdList, 'sldId')
         : <XmlElement>[];
 
-    // Parse themes
-    final themes = _parseThemes(archive);
-
-    // Parse masters
-    final masters = _parseMasters(archive, relsMap, themes);
-
-    // Parse layouts
-    final layouts = _parseLayouts(archive, relsMap);
-
-    // Parse slides
     final slides = <Slide>[];
     for (var i = 0; i < slideIds.length; i++) {
-      final sldId = slideIds[i];
-      final relId = OpenXmlUtils.attr(sldId, 'id', nsPrefix: 'r');
+      final relId = OpenXmlUtils.attr(slideIds[i], 'id', nsPrefix: 'r');
       if (relId == null) continue;
-
-      final slidePath = relsMap['ppt/_rels/presentation.xml.rels']?[relId];
+      final slidePath = _relsMap['ppt/_rels/presentation.xml.rels']?[relId];
       if (slidePath == null) continue;
-
-      final slide = await _parseSlide(archive, slidePath, relsMap, i + 1);
-      slides.add(slide);
+      slides.add(await _parseSlide(archive, slidePath, i + 1));
     }
+
+    final firstTheme = _masters.values.isNotEmpty
+        ? PresentationTheme(
+            colors: _masters.values.first.scheme,
+            fonts: _masters.values.first.fonts,
+          )
+        : const PresentationTheme();
 
     return Presentation(
       id: _uuid.v4(),
       title: 'Imported Presentation',
-      slides: slides,
-      masters: masters,
-      layouts: layouts,
-      theme: themes.isNotEmpty ? themes.first : const PresentationTheme(),
+      slides: slides.isEmpty
+          ? [Slide(id: _uuid.v4(), slideNumber: 1)]
+          : slides,
+      theme: firstTheme,
       settings: PresentationSettings(slideSize: slideSize),
       filePath: filePath,
     );
   }
 
-  Map<String, Map<String, String>> _buildRelsMap(Archive archive) {
-    final map = <String, Map<String, String>>{};
+  // ---------------------------------------------------------------------------
+  // Masters / layouts / theme
+  // ---------------------------------------------------------------------------
+
+  void _parseMasters(Archive archive) {
     for (final file in archive.files) {
-      if (file.name.endsWith('.rels')) {
-        final doc = XmlDocument.parse(String.fromCharCodes(file.content));
-        final rels = <String, String>{};
-        for (final rel in doc.rootElement.childElements) {
-          if (rel.name.local == 'Relationship') {
-            final id = OpenXmlUtils.attr(rel, 'Id');
-            final target = OpenXmlUtils.attr(rel, 'Target');
-            if (id != null && target != null) {
-              rels[id] = target;
-            }
-          }
+      if (!file.name.startsWith('ppt/slideMasters/slideMaster') ||
+          !file.name.endsWith('.xml')) {
+        continue;
+      }
+      final root = XmlDocument.parse(
+        String.fromCharCodes(file.content),
+      ).rootElement;
+      final themePath = _findTarget(_relsPathForPart(file.name), '/theme/');
+      final theme = themePath != null
+          ? _parseThemeAt(archive, themePath)
+          : const PresentationTheme();
+      final scheme = theme.colors;
+      final fonts = theme.fonts;
+
+      final cSld = OpenXmlUtils.findChild(root, 'cSld');
+      final spTree = OpenXmlUtils.findChild(cSld, 'spTree');
+      final placeholders = <_Ph>[];
+      final decorative = <XmlElement>[];
+      _collectShapes(spTree, placeholders, decorative, scheme, fonts);
+
+      final txStyles = OpenXmlUtils.findChild(root, 'txStyles');
+      _masters[file.name] = _Master(
+        path: file.name,
+        scheme: scheme,
+        fonts: fonts,
+        bg: OpenXmlUtils.findChild(cSld, 'bg'),
+        placeholders: placeholders,
+        decorative: decorative,
+        titleStyle: _parseListStyle(
+          OpenXmlUtils.findChild(txStyles, 'titleStyle'),
+          scheme,
+          fonts,
+        ),
+        bodyStyle: _parseListStyle(
+          OpenXmlUtils.findChild(txStyles, 'bodyStyle'),
+          scheme,
+          fonts,
+        ),
+        otherStyle: _parseListStyle(
+          OpenXmlUtils.findChild(txStyles, 'otherStyle'),
+          scheme,
+          fonts,
+        ),
+      );
+    }
+  }
+
+  void _parseLayouts(Archive archive) {
+    for (final file in archive.files) {
+      if (!file.name.startsWith('ppt/slideLayouts/slideLayout') ||
+          !file.name.endsWith('.xml')) {
+        continue;
+      }
+      final root = XmlDocument.parse(
+        String.fromCharCodes(file.content),
+      ).rootElement;
+      final masterPath =
+          _findTarget(_relsPathForPart(file.name), '/slideMasters/') ?? '';
+      final master = _masters[masterPath];
+      final scheme = master?.scheme ?? _defaultScheme;
+      final fonts = master?.fonts ?? _defaultFonts;
+
+      final cSld = OpenXmlUtils.findChild(root, 'cSld');
+      final spTree = OpenXmlUtils.findChild(cSld, 'spTree');
+      final placeholders = <_Ph>[];
+      final decorative = <XmlElement>[];
+      _collectShapes(spTree, placeholders, decorative, scheme, fonts);
+
+      _layouts[file.name] = _Layout(
+        path: file.name,
+        masterPath: masterPath,
+        bg: OpenXmlUtils.findChild(cSld, 'bg'),
+        placeholders: placeholders,
+        decorative: decorative,
+      );
+    }
+  }
+
+  /// Splits an spTree's top-level shapes into placeholders (which other parts
+  /// inherit from) and decorative shapes (drawn behind slide content).
+  void _collectShapes(
+    XmlElement? spTree,
+    List<_Ph> placeholders,
+    List<XmlElement> decorative,
+    ColorScheme scheme,
+    FontScheme fonts,
+  ) {
+    if (spTree == null) return;
+    for (final child in spTree.childElements) {
+      if (child.name.local == 'sp') {
+        final ph = _placeholderInfo(child, scheme, fonts);
+        if (ph != null) {
+          placeholders.add(ph);
+        } else {
+          decorative.add(child);
         }
-        map[file.name] = rels;
+      } else if (child.name.local == 'pic' ||
+          child.name.local == 'grpSp' ||
+          child.name.local == 'graphicFrame') {
+        decorative.add(child);
       }
     }
-    return map;
   }
 
-  List<PresentationTheme> _parseThemes(Archive archive) {
-    final themes = <PresentationTheme>[];
-    for (final file in archive.files) {
-      if (file.name.startsWith('ppt/theme/theme') &&
-          file.name.endsWith('.xml')) {
-        final doc = XmlDocument.parse(String.fromCharCodes(file.content));
-        final themeRoot = doc.rootElement;
+  _Ph? _placeholderInfo(XmlElement sp, ColorScheme scheme, FontScheme fonts) {
+    final nvSpPr = OpenXmlUtils.findChild(sp, 'nvSpPr');
+    final nvPr = OpenXmlUtils.findChild(nvSpPr, 'nvPr');
+    final ph = OpenXmlUtils.findChild(nvPr, 'ph');
+    if (ph == null) return null;
+    final spPr = OpenXmlUtils.findChild(sp, 'spPr');
+    final xfrm = _parseXfrm(OpenXmlUtils.findChild(spPr, 'xfrm'));
+    final txBody = OpenXmlUtils.findChild(sp, 'txBody');
+    return _Ph(
+      type: OpenXmlUtils.attr(ph, 'type') ?? 'body',
+      idx: OpenXmlUtils.attr(ph, 'idx') ?? '',
+      off: xfrm.off,
+      size: xfrm.ext,
+      rot: xfrm.rot,
+      lstStyle: _parseListStyle(
+        OpenXmlUtils.findChild(txBody, 'lstStyle'),
+        scheme,
+        fonts,
+      ),
+    );
+  }
 
-        final clrScheme = OpenXmlUtils.findChild(themeRoot, 'clrScheme');
-        final fontScheme = OpenXmlUtils.findChild(themeRoot, 'fontScheme');
+  PresentationTheme _parseThemeAt(Archive archive, String themePath) {
+    final entry = archive.findFile(themePath);
+    if (entry == null) return const PresentationTheme();
+    final root = XmlDocument.parse(
+      String.fromCharCodes(entry.content),
+    ).rootElement;
+    final themeElements = OpenXmlUtils.findChild(root, 'themeElements');
+    final clrScheme = OpenXmlUtils.findChild(themeElements, 'clrScheme');
+    final fontScheme = OpenXmlUtils.findChild(themeElements, 'fontScheme');
 
-        Color? parseSchemeClr(String name) {
-          final el = OpenXmlUtils.findChild(clrScheme, name);
-          return OpenXmlUtils.parseColor(
-            OpenXmlUtils.findChild(el, 'srgbClr') ??
-                OpenXmlUtils.findChild(el, 'sysClr'),
-          );
-        }
-
-        final colors = ColorScheme(
-          text1: parseSchemeClr('dk1') ?? const Color(0xFF000000),
-          background1: parseSchemeClr('lt1') ?? const Color(0xFFFFFFFF),
-          accent1: parseSchemeClr('accent1') ?? const Color(0xFF4472C4),
-          accent2: parseSchemeClr('accent2') ?? const Color(0xFFED7D31),
-          accent3: parseSchemeClr('accent3') ?? const Color(0xFFA5A5A5),
-          accent4: parseSchemeClr('accent4') ?? const Color(0xFFFFC000),
-          accent5: parseSchemeClr('accent5') ?? const Color(0xFF5B9BD5),
-          accent6: parseSchemeClr('accent6') ?? const Color(0xFF70AD47),
-          hyperlink: parseSchemeClr('hlink') ?? const Color(0xFF0563C1),
-          followedHyperlink:
-              parseSchemeClr('folHlink') ?? const Color(0xFF954F72),
-        );
-
-        String? getFont(String type) {
-          final el = OpenXmlUtils.findChild(fontScheme, type);
-          final latin = OpenXmlUtils.findChild(el, 'latin');
-          return OpenXmlUtils.attr(latin, 'typeface');
-        }
-
-        final fonts = FontScheme(
-          majorFont: getFont('majorFont') ?? 'Calibri',
-          minorFont: getFont('minorFont') ?? 'Calibri',
-        );
-
-        themes.add(
-          PresentationTheme(
-            name: OpenXmlUtils.attr(clrScheme, 'name') ?? 'Office',
-            colors: colors,
-            fonts: fonts,
-          ),
-        );
-      }
+    Color schemeColor(String name, Color fallback) {
+      final el = OpenXmlUtils.findChild(clrScheme, name);
+      return OpenXmlUtils.colorIn(el, scheme: _defaultScheme) ?? fallback;
     }
-    return themes;
+
+    final colors = ColorScheme(
+      text1: schemeColor('dk1', const Color(0xFF000000)),
+      background1: schemeColor('lt1', const Color(0xFFFFFFFF)),
+      accent1: schemeColor('accent1', const Color(0xFF4472C4)),
+      accent2: schemeColor('accent2', const Color(0xFFED7D31)),
+      accent3: schemeColor('accent3', const Color(0xFFA5A5A5)),
+      accent4: schemeColor('accent4', const Color(0xFFFFC000)),
+      accent5: schemeColor('accent5', const Color(0xFF5B9BD5)),
+      accent6: schemeColor('accent6', const Color(0xFF70AD47)),
+      hyperlink: schemeColor('hlink', const Color(0xFF0563C1)),
+      followedHyperlink: schemeColor('folHlink', const Color(0xFF954F72)),
+    );
+
+    String fontOf(String type, String fallback) {
+      final latin = OpenXmlUtils.findChild(
+        OpenXmlUtils.findChild(fontScheme, type),
+        'latin',
+      );
+      return OpenXmlUtils.attr(latin, 'typeface') ?? fallback;
+    }
+
+    return PresentationTheme(
+      colors: colors,
+      fonts: FontScheme(
+        majorFont: fontOf('majorFont', 'Calibri'),
+        minorFont: fontOf('minorFont', 'Calibri'),
+      ),
+    );
   }
 
-  List<SlideMaster> _parseMasters(
-    Archive archive,
-    Map<String, Map<String, String>> relsMap,
-    List<PresentationTheme> themes,
-  ) {
-    final masters = <SlideMaster>[];
-    // Master parsing stub - full implementation would parse slideMaster1.xml etc.
-    return masters;
-  }
-
-  List<SlideLayout> _parseLayouts(
-    Archive archive,
-    Map<String, Map<String, String>> relsMap,
-  ) {
-    final layouts = <SlideLayout>[];
-    // Layout parsing stub
-    return layouts;
-  }
+  // ---------------------------------------------------------------------------
+  // Slide
+  // ---------------------------------------------------------------------------
 
   Future<Slide> _parseSlide(
     Archive archive,
     String slidePath,
-    Map<String, Map<String, String>> relsMap,
     int slideNumber,
   ) async {
     final entry = archive.findFile(slidePath);
     if (entry == null) return Slide(id: _uuid.v4(), slideNumber: slideNumber);
 
-    final doc = XmlDocument.parse(String.fromCharCodes(entry.content));
-    final sldRoot = doc.rootElement;
-    final cSld = OpenXmlUtils.findChild(sldRoot, 'cSld');
-    if (cSld == null) return Slide(id: _uuid.v4(), slideNumber: slideNumber);
-
+    final root = XmlDocument.parse(
+      String.fromCharCodes(entry.content),
+    ).rootElement;
+    final cSld = OpenXmlUtils.findChild(root, 'cSld');
     final spTree = OpenXmlUtils.findChild(cSld, 'spTree');
-    if (spTree == null) return Slide(id: _uuid.v4(), slideNumber: slideNumber);
+
+    final layoutPath = _findTarget(
+      _relsPathForPart(slidePath),
+      '/slideLayouts/',
+    );
+    final layout = layoutPath != null ? _layouts[layoutPath] : null;
+    final master = layout != null ? _masters[layout.masterPath] : null;
+    final scheme = master?.scheme ?? _defaultScheme;
+    final fonts = master?.fonts ?? _defaultFonts;
 
     final elements = <SlideElement>[];
-    int zIndex = 0;
+    var zIndex = 0;
 
-    for (final child in spTree.childElements) {
-      SlideElement? el;
-      switch (child.name.local) {
-        case 'sp':
-          el = _parseShape(child);
-          break;
-        case 'pic':
-          el = _parsePicture(child, archive, slidePath, relsMap);
-          break;
-        case 'graphicFrame':
-          el = _parseGraphicFrame(child, archive, slidePath, relsMap);
-          break;
+    // Decorative master/layout graphics render behind the slide's own content.
+    final showMaster = OpenXmlUtils.attr(root, 'showMasterSp') != '0';
+    if (showMaster && master != null) {
+      for (final sp in master.decorative) {
+        final el = _parseAny(sp, master.path, scheme, fonts);
+        if (el != null) elements.add(el.copyWith(zIndex: zIndex++));
       }
-      if (el != null) {
-        elements.add(el.copyWith(zIndex: zIndex++));
+    }
+    if (layout != null) {
+      for (final sp in layout.decorative) {
+        final el = _parseAny(sp, layout.path, scheme, fonts);
+        if (el != null) elements.add(el.copyWith(zIndex: zIndex++));
       }
     }
 
-    // Parse background
-    Color? bgColor;
-    final bg = OpenXmlUtils.findChild(cSld, 'bg');
-    if (bg != null) {
-      final solidFill = OpenXmlUtils.findChild(bg, 'solidFill');
-      if (solidFill != null) {
-        bgColor = OpenXmlUtils.parseColor(
-          OpenXmlUtils.findChild(solidFill, 'srgbClr') ??
-              OpenXmlUtils.findChild(solidFill, 'schemeClr'),
+    if (spTree != null) {
+      for (final child in spTree.childElements) {
+        final el = _parseAny(
+          child,
+          slidePath,
+          scheme,
+          fonts,
+          layout: layout,
+          master: master,
         );
+        if (el != null) elements.add(el.copyWith(zIndex: zIndex++));
       }
     }
 
-    // Parse transition
-    final transition = OpenXmlUtils.findChild(sldRoot, 'transition');
-    SlideTransition? slideTransition;
-    if (transition != null) {
-      final type = OpenXmlUtils.attr(transition, 'type');
-      final dur = OpenXmlUtils.attr(transition, 'dur');
-      slideTransition = SlideTransition(
-        type: _parseTransitionType(type),
+    final bgColor =
+        _backgroundColor(cSld, scheme) ??
+        (layout != null ? _resolveBg(layout.bg, scheme) : null) ??
+        (master != null ? _resolveBg(master.bg, scheme) : null);
+
+    final transitionEl = OpenXmlUtils.findChild(root, 'transition');
+    SlideTransition? transition;
+    if (transitionEl != null) {
+      final dur = OpenXmlUtils.attr(transitionEl, 'dur');
+      transition = SlideTransition(
+        type: _parseTransitionType(_transitionChildName(transitionEl)),
         duration: dur != null
-            ? Duration(milliseconds: int.parse(dur))
+            ? Duration(milliseconds: int.tryParse(dur) ?? 2000)
             : const Duration(milliseconds: 2000),
       );
     }
@@ -245,96 +344,123 @@ class PptxImporter {
       id: _uuid.v4(),
       elements: elements,
       backgroundColorOverride: bgColor,
-      transition: slideTransition ?? const SlideTransition(),
+      transition: transition ?? const SlideTransition(),
       slideNumber: slideNumber,
     );
   }
 
-  SlideElement? _parseShape(XmlElement sp) {
+  Color? _backgroundColor(XmlElement? cSld, ColorScheme scheme) {
+    return _resolveBg(OpenXmlUtils.findChild(cSld, 'bg'), scheme);
+  }
+
+  Color? _resolveBg(XmlElement? bg, ColorScheme scheme) {
+    if (bg == null) return null;
+    final bgPr = OpenXmlUtils.findChild(bg, 'bgPr');
+    final solid = OpenXmlUtils.findChild(bgPr, 'solidFill');
+    if (solid != null) return OpenXmlUtils.colorIn(solid, scheme: scheme);
+    // bgRef points into the theme's background fill styles; approximate with
+    // its color child.
+    final bgRef = OpenXmlUtils.findChild(bg, 'bgRef');
+    if (bgRef != null) return OpenXmlUtils.colorIn(bgRef, scheme: scheme);
+    return null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Shape dispatch
+  // ---------------------------------------------------------------------------
+
+  SlideElement? _parseAny(
+    XmlElement el,
+    String partPath,
+    ColorScheme scheme,
+    FontScheme fonts, {
+    _Layout? layout,
+    _Master? master,
+  }) {
+    switch (el.name.local) {
+      case 'sp':
+        return _parseShape(el, partPath, scheme, fonts, layout, master);
+      case 'pic':
+        return _parsePicture(el, partPath, scheme);
+      case 'graphicFrame':
+        return _parseGraphicFrame(el, scheme, fonts);
+      case 'grpSp':
+        return _parseGroup(el, partPath, scheme, fonts);
+      default:
+        return null;
+    }
+  }
+
+  SlideElement? _parseShape(
+    XmlElement sp,
+    String partPath,
+    ColorScheme scheme,
+    FontScheme fonts,
+    _Layout? layout,
+    _Master? master,
+  ) {
     final nvSpPr = OpenXmlUtils.findChild(sp, 'nvSpPr');
-    final cNvPr = nvSpPr != null
-        ? OpenXmlUtils.findChild(nvSpPr, 'cNvPr')
-        : null;
-    final name = cNvPr != null ? OpenXmlUtils.attr(cNvPr, 'name') : null;
+    final cNvPr = OpenXmlUtils.findChild(nvSpPr, 'cNvPr');
+    final name = OpenXmlUtils.attr(cNvPr, 'name');
     final id = OpenXmlUtils.attr(cNvPr, 'id') ?? _uuid.v4();
 
+    // Placeholder linkage to the layout/master.
+    final ph = OpenXmlUtils.findChild(OpenXmlUtils.findChild(nvSpPr, 'nvPr'), 'ph');
+    final phType = ph != null ? (OpenXmlUtils.attr(ph, 'type') ?? 'body') : null;
+    final phIdx = ph != null ? (OpenXmlUtils.attr(ph, 'idx') ?? '') : '';
+
     final spPr = OpenXmlUtils.findChild(sp, 'spPr');
-    if (spPr == null) return null;
+    final xfrm = _parseXfrm(OpenXmlUtils.findChild(spPr, 'xfrm'));
 
-    final xfrm = OpenXmlUtils.findChild(spPr, 'xfrm');
-    final off = xfrm != null ? OpenXmlUtils.findChild(xfrm, 'off') : null;
-    final ext = xfrm != null ? OpenXmlUtils.findChild(xfrm, 'ext') : null;
-
-    final x = off != null
-        ? OpenXmlUtils.parseEmu(OpenXmlUtils.attr(off, 'x')).toDouble()
-        : 0.0;
-    final y = off != null
-        ? OpenXmlUtils.parseEmu(OpenXmlUtils.attr(off, 'y')).toDouble()
-        : 0.0;
-    final cx = ext != null
-        ? OpenXmlUtils.parseEmu(OpenXmlUtils.attr(ext, 'cx')).toDouble()
-        : 100.0;
-    final cy = ext != null
-        ? OpenXmlUtils.parseEmu(OpenXmlUtils.attr(ext, 'cy')).toDouble()
-        : 100.0;
-
-    // Parse fill
-    final solidFill = OpenXmlUtils.findChild(spPr, 'solidFill');
-    final fillColor =
-        OpenXmlUtils.parseColor(
-          OpenXmlUtils.findChild(solidFill, 'srgbClr') ??
-              OpenXmlUtils.findChild(solidFill, 'schemeClr'),
-        ) ??
-        const Color(0xFF4472C4);
-
-    // Parse line
-    final ln = OpenXmlUtils.findChild(spPr, 'ln');
-    Color? strokeColor;
-    double strokeWidth = 0;
-    if (ln != null) {
-      final w = OpenXmlUtils.attr(ln, 'w');
-      if (w != null) strokeWidth = int.parse(w) / 12700; // EMU to pt approx
-      final lnSolidFill = OpenXmlUtils.findChild(ln, 'solidFill');
-      strokeColor = OpenXmlUtils.parseColor(
-        OpenXmlUtils.findChild(lnSolidFill, 'srgbClr') ??
-            OpenXmlUtils.findChild(lnSolidFill, 'schemeClr'),
-      );
+    // Geometry: slide value, else inherited from layout, else master.
+    _Ph? layoutPh;
+    _Ph? masterPh;
+    if (phType != null) {
+      layoutPh = layout != null
+          ? _matchPh(layout.placeholders, phType, phIdx)
+          : null;
+      masterPh = master != null
+          ? _matchPh(master.placeholders, phType, phIdx)
+          : null;
     }
 
-    // Parse geometry
-    final prstGeom = OpenXmlUtils.findChild(spPr, 'prstGeom');
-    final prst = prstGeom != null ? OpenXmlUtils.attr(prstGeom, 'prst') : null;
-    ShapeType shapeType = ShapeType.rectangle;
-    if (prst == 'ellipse')
-      shapeType = ShapeType.circle;
-    else if (prst == 'roundRect')
-      shapeType = ShapeType.roundedRectangle;
-    else if (prst == 'triangle')
-      shapeType = ShapeType.triangle;
-    else if (prst == 'diamond')
-      shapeType = ShapeType.diamond;
-    else if (prst == 'pentagon')
-      shapeType = ShapeType.pentagon;
-    else if (prst == 'hexagon')
-      shapeType = ShapeType.hexagon;
-    else if (prst == 'star5')
-      shapeType = ShapeType.star;
-    else if (prst == 'arrow')
-      shapeType = ShapeType.arrow;
+    final off =
+        xfrm.off ?? layoutPh?.off ?? masterPh?.off ?? Offset.zero;
+    final size =
+        xfrm.ext ?? layoutPh?.size ?? masterPh?.size ?? const Size(100, 100);
+    final rot = xfrm.rot;
 
-    // Parse text
+    final fill = _resolveFill(sp, spPr, scheme);
+    final stroke = _resolveStroke(spPr, scheme);
+    final shapeType = _shapeType(
+      OpenXmlUtils.attr(OpenXmlUtils.findChild(spPr, 'prstGeom'), 'prst'),
+    );
+
     final txBody = OpenXmlUtils.findChild(sp, 'txBody');
     if (txBody != null) {
-      final paragraphs = _parseTextBody(txBody);
+      // Effective list style for inherited text sizing/coloring.
+      final listStyle = _effectiveListStyle(
+        phType,
+        layoutPh,
+        masterPh,
+        master,
+        scheme,
+        fonts,
+      );
+      final paragraphs = _parseTextBody(txBody, listStyle, scheme, fonts);
+      final hasText = paragraphs.any((p) => p.plainText.trim().isNotEmpty);
+      // Skip empty inherited prompt placeholders so they don't render as boxes.
+      if (!hasText && ph != null && _isEmptyTxBody(txBody)) return null;
       return TextElement(
         id: id,
         name: name,
-        position: Offset(x, y),
-        size: Size(cx, cy),
+        position: off,
+        size: size,
+        rotation: rot,
         paragraphs: paragraphs,
-        fillColor: fillColor,
-        borderWidth: strokeWidth > 0 ? strokeWidth : null,
-        borderColor: strokeColor,
+        fillColor: fill,
+        borderWidth: stroke?.width,
+        borderColor: stroke?.color,
         zIndex: 0,
       );
     }
@@ -342,298 +468,516 @@ class PptxImporter {
     return ShapeElement(
       id: id,
       name: name,
-      position: Offset(x, y),
-      size: Size(cx, cy),
-      fillColor: fillColor,
-      strokeColor: strokeColor ?? const Color(0xFF000000),
-      strokeWidth: strokeWidth,
+      position: off,
+      size: size,
+      rotation: rot,
+      fillColor: fill ?? const Color(0x00000000),
+      gradientStart: _gradient(spPr, scheme)?.$1,
+      gradientEnd: _gradient(spPr, scheme)?.$2,
+      gradientType: _gradient(spPr, scheme) != null ? GradientType.linear : null,
+      strokeColor: stroke?.color ?? const Color(0xFF000000),
+      strokeWidth: stroke?.width ?? 0,
       shapeType: shapeType,
+      flipHorizontal: xfrm.flipH,
+      flipVertical: xfrm.flipV,
       zIndex: 0,
     );
   }
 
-  List<RichParagraph> _parseTextBody(XmlElement txBody) {
-    final paragraphs = <RichParagraph>[];
-    final pElements = OpenXmlUtils.findChildren(txBody, 'p');
-
-    for (final p in pElements) {
-      final runs = <TextRun>[];
-      final pPr = OpenXmlUtils.findChild(p, 'pPr');
-
-      // Parse paragraph style
-      TextAlign align = TextAlign.left;
-      if (pPr != null) {
-        final algn = OpenXmlUtils.attr(pPr, 'algn');
-        if (algn == 'ctr')
-          align = TextAlign.center;
-        else if (algn == 'r')
-          align = TextAlign.right;
-        else if (algn == 'just')
-          align = TextAlign.justify;
-      }
-
-      // Parse runs
+  bool _isEmptyTxBody(XmlElement txBody) {
+    for (final p in OpenXmlUtils.findChildren(txBody, 'p')) {
       for (final r in OpenXmlUtils.findChildren(p, 'r')) {
-        final t = OpenXmlUtils.findChild(r, 't');
-        final text = t?.innerText ?? '';
-
-        final rPr = OpenXmlUtils.findChild(r, 'rPr');
-        String font = 'Calibri';
-        double fontSize = 18;
-        Color color = const Color(0xFF000000);
-        bool bold = false;
-        bool italic = false;
-        bool underline = false;
-        bool strikethrough = false;
-
-        if (rPr != null) {
-          final sz = OpenXmlUtils.attr(rPr, 'sz');
-          if (sz != null) fontSize = int.parse(sz) / 100;
-
-          final b = OpenXmlUtils.attr(rPr, 'b');
-          if (b != null) bold = int.parse(b) > 0;
-
-          final i = OpenXmlUtils.attr(rPr, 'i');
-          if (i != null) italic = int.parse(i) > 0;
-
-          final u = OpenXmlUtils.attr(rPr, 'u');
-          if (u != null && u != 'none') underline = true;
-
-          final strike = OpenXmlUtils.attr(rPr, 'strike');
-          if (strike != null && strike != 'noStrike') strikethrough = true;
-
-          final latin = OpenXmlUtils.findChild(rPr, 'latin');
-          if (latin != null) {
-            final typeface = OpenXmlUtils.attr(latin, 'typeface');
-            if (typeface != null && !typeface.startsWith('+')) font = typeface;
-          }
-
-          final solidFill = OpenXmlUtils.findChild(rPr, 'solidFill');
-          final parsedColor = OpenXmlUtils.parseColor(
-            OpenXmlUtils.findChild(solidFill, 'srgbClr') ??
-                OpenXmlUtils.findChild(solidFill, 'schemeClr'),
-          );
-          if (parsedColor != null) color = parsedColor;
+        if ((OpenXmlUtils.findChild(r, 't')?.innerText ?? '').isNotEmpty) {
+          return false;
         }
-
-        runs.add(
-          TextRun(
-            text: text,
-            fontFamily: font,
-            fontSize: fontSize,
-            color: color,
-            bold: bold,
-            italic: italic,
-            underline: underline,
-            strikethrough: strikethrough,
-          ),
-        );
       }
+    }
+    return true;
+  }
 
-      // Handle endParaRPr for empty paragraphs
-      if (runs.isEmpty) {
-        runs.add(const TextRun(text: ''));
+  // ---------------------------------------------------------------------------
+  // Fills / strokes
+  // ---------------------------------------------------------------------------
+
+  Color? _resolveFill(XmlElement sp, XmlElement? spPr, ColorScheme scheme) {
+    if (spPr != null) {
+      if (OpenXmlUtils.findChild(spPr, 'noFill') != null) {
+        return const Color(0x00000000);
       }
+      final solid = OpenXmlUtils.findChild(spPr, 'solidFill');
+      if (solid != null) {
+        final c = OpenXmlUtils.colorIn(solid, scheme: scheme);
+        if (c != null) return c;
+      }
+    }
+    // Themed shapes carry their fill in <p:style><a:fillRef>.
+    final fillRef = OpenXmlUtils.findChild(
+      OpenXmlUtils.findChild(sp, 'style'),
+      'fillRef',
+    );
+    if (fillRef != null) return OpenXmlUtils.colorIn(fillRef, scheme: scheme);
+    return null;
+  }
+
+  ({Color color, double width})? _resolveStroke(
+    XmlElement? spPr,
+    ColorScheme scheme,
+  ) {
+    final ln = OpenXmlUtils.findChild(spPr, 'ln');
+    if (ln == null) return null;
+    if (OpenXmlUtils.findChild(ln, 'noFill') != null) return null;
+    final w = OpenXmlUtils.attr(ln, 'w');
+    final width = w != null ? (int.tryParse(w) ?? 0) / 12700.0 : 1.0;
+    final solid = OpenXmlUtils.findChild(ln, 'solidFill');
+    final color = OpenXmlUtils.colorIn(solid, scheme: scheme);
+    if (color == null && width == 0) return null;
+    return (color: color ?? const Color(0xFF000000), width: width);
+  }
+
+  (Color, Color)? _gradient(XmlElement? spPr, ColorScheme scheme) {
+    final grad = OpenXmlUtils.findChild(spPr, 'gradFill');
+    if (grad == null) return null;
+    final gsLst = OpenXmlUtils.findChild(grad, 'gsLst');
+    final stops = OpenXmlUtils.findChildren(gsLst, 'gs');
+    if (stops.length < 2) return null;
+    final start = OpenXmlUtils.colorIn(stops.first, scheme: scheme);
+    final end = OpenXmlUtils.colorIn(stops.last, scheme: scheme);
+    if (start == null || end == null) return null;
+    return (start, end);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Text
+  // ---------------------------------------------------------------------------
+
+  /// Builds the effective per-level list style for a placeholder by layering
+  /// master text styles (by category) under the master and layout placeholder
+  /// list styles (highest priority).
+  _ListStyle _effectiveListStyle(
+    String? phType,
+    _Ph? layoutPh,
+    _Ph? masterPh,
+    _Master? master,
+    ColorScheme scheme,
+    FontScheme fonts,
+  ) {
+    final layers = <_ListStyle>[];
+    if (master != null && phType != null) {
+      switch (_category(phType)) {
+        case 'title':
+          layers.add(master.titleStyle);
+          break;
+        case 'body':
+          layers.add(master.bodyStyle);
+          break;
+        default:
+          layers.add(master.otherStyle);
+      }
+    }
+    if (masterPh != null) layers.add(masterPh.lstStyle);
+    if (layoutPh != null) layers.add(layoutPh.lstStyle);
+    return _mergeListStyles(layers);
+  }
+
+  List<RichParagraph> _parseTextBody(
+    XmlElement txBody,
+    _ListStyle listStyle,
+    ColorScheme scheme,
+    FontScheme fonts,
+  ) {
+    final paragraphs = <RichParagraph>[];
+    for (final p in OpenXmlUtils.findChildren(txBody, 'p')) {
+      final pPr = OpenXmlUtils.findChild(p, 'pPr');
+      final level = int.tryParse(OpenXmlUtils.attr(pPr, 'lvl') ?? '0') ?? 0;
+      final levelStyle = listStyle.at(level);
+
+      var align = _align(OpenXmlUtils.attr(pPr, 'algn')) ?? levelStyle?.align;
+
+      final runs = <TextRun>[];
+      for (final node in p.childElements) {
+        if (node.name.local == 'r' || node.name.local == 'fld') {
+          final t = OpenXmlUtils.findChild(node, 't');
+          final text = t?.innerText ?? '';
+          if (text.isEmpty && node.name.local == 'r') continue;
+          runs.add(
+            _resolveRun(
+              OpenXmlUtils.findChild(node, 'rPr'),
+              levelStyle,
+              scheme,
+              fonts,
+              text: text,
+            ),
+          );
+        } else if (node.name.local == 'br') {
+          runs.add(const TextRun(text: '\n'));
+        }
+      }
+      if (runs.isEmpty) runs.add(const TextRun(text: ''));
 
       paragraphs.add(
         RichParagraph(
           runs: runs,
-          style: ParagraphStyle(alignment: align),
+          style: ParagraphStyle(
+            alignment: align ?? TextAlign.left,
+            level: level,
+            bulletType: _bulletType(pPr),
+          ),
         ),
       );
     }
-
     return paragraphs.isEmpty ? [const RichParagraph()] : paragraphs;
   }
 
+  TextRun _resolveRun(
+    XmlElement? rPr,
+    _LevelStyle? levelStyle,
+    ColorScheme scheme,
+    FontScheme fonts, {
+    required String text,
+  }) {
+    var font = levelStyle?.font;
+    var size = levelStyle?.size;
+    var color = levelStyle?.color;
+    var bold = levelStyle?.bold ?? false;
+    var italic = levelStyle?.italic ?? false;
+    var underline = false;
+    var strike = false;
+
+    if (rPr != null) {
+      final sz = OpenXmlUtils.attr(rPr, 'sz');
+      if (sz != null) size = (int.tryParse(sz) ?? 1800) / 100.0;
+      final b = OpenXmlUtils.attr(rPr, 'b');
+      if (b != null) bold = b == '1' || b == 'true';
+      final i = OpenXmlUtils.attr(rPr, 'i');
+      if (i != null) italic = i == '1' || i == 'true';
+      final u = OpenXmlUtils.attr(rPr, 'u');
+      if (u != null && u != 'none') underline = true;
+      final s = OpenXmlUtils.attr(rPr, 'strike');
+      if (s != null && s != 'noStrike') strike = true;
+      final latin = OpenXmlUtils.findChild(rPr, 'latin');
+      final typeface = OpenXmlUtils.attr(latin, 'typeface');
+      if (typeface != null) font = typeface;
+      final solid = OpenXmlUtils.findChild(rPr, 'solidFill');
+      final c = OpenXmlUtils.colorIn(solid, scheme: scheme);
+      if (c != null) color = c;
+    }
+
+    return TextRun(
+      text: text,
+      fontFamily: _resolveFont(font, fonts),
+      fontSize: size ?? 18,
+      color: color ?? scheme.text1,
+      bold: bold,
+      italic: italic,
+      underline: underline,
+      strikethrough: strike,
+    );
+  }
+
+  String _resolveFont(String? typeface, FontScheme fonts) {
+    if (typeface == null || typeface.isEmpty) return fonts.minorFont;
+    if (typeface.startsWith('+mj')) return fonts.majorFont;
+    if (typeface.startsWith('+mn')) return fonts.minorFont;
+    return typeface;
+  }
+
+  _ListStyle _parseListStyle(
+    XmlElement? lstStyle,
+    ColorScheme scheme,
+    FontScheme fonts,
+  ) {
+    final style = _ListStyle();
+    if (lstStyle == null) return style;
+    for (final child in lstStyle.childElements) {
+      final m = RegExp(r'^lvl(\d)pPr$').firstMatch(child.name.local);
+      if (m == null) continue;
+      final level = (int.parse(m.group(1)!) - 1).clamp(0, 8);
+      final defRPr = OpenXmlUtils.findChild(child, 'defRPr');
+      final ls = _LevelStyle()..align = _align(OpenXmlUtils.attr(child, 'algn'));
+      if (defRPr != null) {
+        final sz = OpenXmlUtils.attr(defRPr, 'sz');
+        if (sz != null) ls.size = (int.tryParse(sz) ?? 1800) / 100.0;
+        final b = OpenXmlUtils.attr(defRPr, 'b');
+        if (b != null) ls.bold = b == '1' || b == 'true';
+        final i = OpenXmlUtils.attr(defRPr, 'i');
+        if (i != null) ls.italic = i == '1' || i == 'true';
+        final latin = OpenXmlUtils.findChild(defRPr, 'latin');
+        ls.font = OpenXmlUtils.attr(latin, 'typeface');
+        final solid = OpenXmlUtils.findChild(defRPr, 'solidFill');
+        ls.color = OpenXmlUtils.colorIn(solid, scheme: scheme);
+      }
+      style.levels[level] = ls;
+    }
+    return style;
+  }
+
+  _ListStyle _mergeListStyles(List<_ListStyle> lowToHigh) {
+    final merged = _ListStyle();
+    for (final layer in lowToHigh) {
+      layer.levels.forEach((level, ls) {
+        final target = merged.levels.putIfAbsent(level, () => _LevelStyle());
+        if (ls.size != null) target.size = ls.size;
+        if (ls.color != null) target.color = ls.color;
+        if (ls.font != null) target.font = ls.font;
+        if (ls.bold != null) target.bold = ls.bold;
+        if (ls.italic != null) target.italic = ls.italic;
+        if (ls.align != null) target.align = ls.align;
+      });
+    }
+    return merged;
+  }
+
+  TextAlign? _align(String? algn) {
+    switch (algn) {
+      case 'ctr':
+        return TextAlign.center;
+      case 'r':
+        return TextAlign.right;
+      case 'just':
+        return TextAlign.justify;
+      case 'l':
+        return TextAlign.left;
+      default:
+        return null;
+    }
+  }
+
+  BulletType _bulletType(XmlElement? pPr) {
+    if (pPr == null) return BulletType.none;
+    if (OpenXmlUtils.findChild(pPr, 'buNone') != null) return BulletType.none;
+    if (OpenXmlUtils.findChild(pPr, 'buAutoNum') != null) {
+      return BulletType.number;
+    }
+    if (OpenXmlUtils.findChild(pPr, 'buChar') != null) return BulletType.bullet;
+    return BulletType.none;
+  }
+
+  String _category(String phType) {
+    switch (phType) {
+      case 'title':
+      case 'ctrTitle':
+        return 'title';
+      case 'body':
+      case 'subTitle':
+      case 'obj':
+        return 'body';
+      default:
+        return 'other';
+    }
+  }
+
+  /// Matches a slide placeholder to one in a layout/master. Index takes
+  /// priority; otherwise type, treating title/ctrTitle as equivalent.
+  _Ph? _matchPh(List<_Ph> phs, String type, String idx) {
+    if (idx.isNotEmpty) {
+      for (final p in phs) {
+        if (p.idx == idx) return p;
+      }
+    }
+    final cat = _category(type);
+    for (final p in phs) {
+      if (p.type == type) return p;
+    }
+    for (final p in phs) {
+      if (_category(p.type) == cat) return p;
+    }
+    return null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Pictures / groups / frames
+  // ---------------------------------------------------------------------------
+
   SlideElement? _parsePicture(
     XmlElement pic,
-    Archive archive,
-    String slidePath,
-    Map<String, Map<String, String>> relsMap,
+    String partPath,
+    ColorScheme scheme,
   ) {
-    final nvPicPr = OpenXmlUtils.findChild(pic, 'nvPicPr');
-    final cNvPr = nvPicPr != null
-        ? OpenXmlUtils.findChild(nvPicPr, 'cNvPr')
-        : null;
+    final cNvPr = OpenXmlUtils.findChild(
+      OpenXmlUtils.findChild(pic, 'nvPicPr'),
+      'cNvPr',
+    );
     final id = OpenXmlUtils.attr(cNvPr, 'id') ?? _uuid.v4();
-    final name = cNvPr != null ? OpenXmlUtils.attr(cNvPr, 'name') : null;
+    final name = OpenXmlUtils.attr(cNvPr, 'name');
 
     final spPr = OpenXmlUtils.findChild(pic, 'spPr');
-    if (spPr == null) return null;
+    final xfrm = _parseXfrm(OpenXmlUtils.findChild(spPr, 'xfrm'));
 
-    final xfrm = OpenXmlUtils.findChild(spPr, 'xfrm');
-    final off = xfrm != null ? OpenXmlUtils.findChild(xfrm, 'off') : null;
-    final ext = xfrm != null ? OpenXmlUtils.findChild(xfrm, 'ext') : null;
-
-    final x = off != null
-        ? OpenXmlUtils.parseEmu(OpenXmlUtils.attr(off, 'x')).toDouble()
-        : 0.0;
-    final y = off != null
-        ? OpenXmlUtils.parseEmu(OpenXmlUtils.attr(off, 'y')).toDouble()
-        : 0.0;
-    final cx = ext != null
-        ? OpenXmlUtils.parseEmu(OpenXmlUtils.attr(ext, 'cx')).toDouble()
-        : 100.0;
-    final cy = ext != null
-        ? OpenXmlUtils.parseEmu(OpenXmlUtils.attr(ext, 'cy')).toDouble()
-        : 100.0;
-
-    final blipFill = OpenXmlUtils.findChild(pic, 'blipFill');
-    final blip = blipFill != null
-        ? OpenXmlUtils.findChild(blipFill, 'blip')
-        : null;
-    final embedId = blip != null
-        ? OpenXmlUtils.attr(blip, 'embed', nsPrefix: 'r')
-        : null;
-
+    final blip = OpenXmlUtils.findChild(
+      OpenXmlUtils.findChild(pic, 'blipFill'),
+      'blip',
+    );
+    final embedId = OpenXmlUtils.attr(blip, 'embed', nsPrefix: 'r');
     String? imagePath;
     if (embedId != null) {
-      final slideRelsPath = slidePath.replaceAll('.xml', '.xml.rels');
-      final slideRelsPath2 = 'ppt/' + slideRelsPath.split('/').last;
-      final target =
-          relsMap[slideRelsPath2]?[embedId] ??
-          relsMap['ppt/slides/_rels/${slidePath.split('/').last}.rels']?[embedId];
-      if (target != null) {
-        imagePath = 'ppt/media/' + target.split('/').last;
-      }
+      final archivePath = _relsMap[_relsPathForPart(partPath)]?[embedId];
+      if (archivePath != null) imagePath = _mediaFiles[archivePath];
     }
 
     return ImageElement(
       id: id,
       name: name,
-      position: Offset(x, y),
-      size: Size(cx, cy),
+      position: xfrm.off ?? Offset.zero,
+      size: xfrm.ext ?? const Size(100, 100),
+      rotation: xfrm.rot,
       imagePath: imagePath ?? '',
       zIndex: 0,
     );
   }
 
+  SlideElement? _parseGroup(
+    XmlElement grpSp,
+    String partPath,
+    ColorScheme scheme,
+    FontScheme fonts,
+  ) {
+    final grpSpPr = OpenXmlUtils.findChild(grpSp, 'grpSpPr');
+    final xfrmEl = OpenXmlUtils.findChild(grpSpPr, 'xfrm');
+    final xfrm = _parseXfrm(xfrmEl);
+    final chOff = OpenXmlUtils.findChild(xfrmEl, 'chOff');
+    final chExt = OpenXmlUtils.findChild(xfrmEl, 'chExt');
+
+    final off = xfrm.off ?? Offset.zero;
+    final ext = xfrm.ext ?? const Size(100, 100);
+    final chOffX = OpenXmlUtils.parseEmuD(OpenXmlUtils.attr(chOff, 'x'));
+    final chOffY = OpenXmlUtils.parseEmuD(OpenXmlUtils.attr(chOff, 'y'));
+    final chCx = OpenXmlUtils.parseEmuD(OpenXmlUtils.attr(chExt, 'cx'));
+    final chCy = OpenXmlUtils.parseEmuD(OpenXmlUtils.attr(chExt, 'cy'));
+    final sx = chCx != 0 ? ext.width / chCx : 1.0;
+    final sy = chCy != 0 ? ext.height / chCy : 1.0;
+
+    final children = <SlideElement>[];
+    for (final child in grpSp.childElements) {
+      final el = _parseAny(child, partPath, scheme, fonts);
+      if (el == null) continue;
+      children.add(_transformChild(el, off, chOffX, chOffY, sx, sy));
+    }
+    if (children.isEmpty) return null;
+
+    return GroupElement(
+      id: _uuid.v4(),
+      name: null,
+      position: off,
+      size: ext,
+      children: children,
+      zIndex: 0,
+    );
+  }
+
+  /// Maps an element from a group's child coordinate space into absolute slide
+  /// coordinates, recursing into nested groups.
+  SlideElement _transformChild(
+    SlideElement el,
+    Offset off,
+    double chOffX,
+    double chOffY,
+    double sx,
+    double sy,
+  ) {
+    final newPos = Offset(
+      off.dx + (el.position.dx - chOffX) * sx,
+      off.dy + (el.position.dy - chOffY) * sy,
+    );
+    final newSize = Size(el.size.width * sx, el.size.height * sy);
+    if (el is GroupElement) {
+      final movedChildren = el.children
+          .map((c) => _transformChild(c, off, chOffX, chOffY, sx, sy))
+          .toList();
+      return el.copyWith(
+        position: newPos,
+        size: newSize,
+        children: movedChildren,
+      );
+    }
+    return el.copyWith(position: newPos, size: newSize);
+  }
+
   SlideElement? _parseGraphicFrame(
     XmlElement graphicFrame,
-    Archive archive,
-    String slidePath,
-    Map<String, Map<String, String>> relsMap,
+    ColorScheme scheme,
+    FontScheme fonts,
   ) {
-    final spPr = OpenXmlUtils.findChild(graphicFrame, 'spPr');
-    final xfrm = spPr != null ? OpenXmlUtils.findChild(spPr, 'xfrm') : null;
-    final off = xfrm != null ? OpenXmlUtils.findChild(xfrm, 'off') : null;
-    final ext = xfrm != null ? OpenXmlUtils.findChild(xfrm, 'ext') : null;
+    final xfrm = _parseXfrm(OpenXmlUtils.findChild(graphicFrame, 'xfrm'));
+    final off = xfrm.off ?? Offset.zero;
+    final size = xfrm.ext ?? const Size(100, 100);
 
-    final x = off != null
-        ? OpenXmlUtils.parseEmu(OpenXmlUtils.attr(off, 'x')).toDouble()
-        : 0.0;
-    final y = off != null
-        ? OpenXmlUtils.parseEmu(OpenXmlUtils.attr(off, 'y')).toDouble()
-        : 0.0;
-    final cx = ext != null
-        ? OpenXmlUtils.parseEmu(OpenXmlUtils.attr(ext, 'cx')).toDouble()
-        : 100.0;
-    final cy = ext != null
-        ? OpenXmlUtils.parseEmu(OpenXmlUtils.attr(ext, 'cy')).toDouble()
-        : 100.0;
-
-    final graphic = OpenXmlUtils.findChild(graphicFrame, 'graphic');
-    final graphicData = graphic != null
-        ? OpenXmlUtils.findChild(graphic, 'graphicData')
-        : null;
+    final graphicData = OpenXmlUtils.findChild(
+      OpenXmlUtils.findChild(graphicFrame, 'graphic'),
+      'graphicData',
+    );
     if (graphicData == null) return null;
-
     final uri = OpenXmlUtils.attr(graphicData, 'uri');
 
-    // Table
     if (uri == 'http://schemas.openxmlformats.org/drawingml/2006/table') {
       final tbl = OpenXmlUtils.findChild(graphicData, 'tbl');
-      if (tbl != null) {
-        return _parseTable(tbl, x, y, cx, cy);
-      }
+      if (tbl != null) return _parseTable(tbl, off, size, scheme, fonts);
     }
-
-    // Chart
     if (uri == 'http://schemas.openxmlformats.org/drawingml/2006/chart') {
-      final chart = OpenXmlUtils.findChild(graphicData, 'chart');
-      if (chart != null) {
+      if (OpenXmlUtils.findChild(graphicData, 'chart') != null) {
         return ChartElement(
           id: _uuid.v4(),
-          position: Offset(x, y),
-          size: Size(cx, cy),
+          position: off,
+          size: size,
           data: const ChartData(),
           zIndex: 0,
         );
       }
     }
-
     return null;
   }
 
   TableElement _parseTable(
     XmlElement tbl,
-    double x,
-    double y,
-    double cx,
-    double cy,
+    Offset off,
+    Size size,
+    ColorScheme scheme,
+    FontScheme fonts,
   ) {
     final rows = <TableRow>[];
     final columns = <TableColumn>[];
     final cells = <TableCell>[];
 
-    // Parse grid columns
     final tblGrid = OpenXmlUtils.findChild(tbl, 'tblGrid');
-    if (tblGrid != null) {
-      for (final gridCol in OpenXmlUtils.findChildren(tblGrid, 'gridCol')) {
-        final w = OpenXmlUtils.attr(gridCol, 'w');
-        columns.add(
-          TableColumn(
-            id: _uuid.v4(),
-            width: w != null ? OpenXmlUtils.parseEmu(w).toDouble() : 100,
-          ),
-        );
-      }
+    for (final gridCol in OpenXmlUtils.findChildren(tblGrid, 'gridCol')) {
+      final w = OpenXmlUtils.attr(gridCol, 'w');
+      columns.add(
+        TableColumn(
+          id: _uuid.v4(),
+          width: w != null ? OpenXmlUtils.parseEmuD(w) : 100,
+        ),
+      );
     }
 
-    // Parse rows
     for (final tr in OpenXmlUtils.findChildren(tbl, 'tr')) {
       final h = OpenXmlUtils.attr(tr, 'h');
       final rowId = _uuid.v4();
       rows.add(
         TableRow(
           id: rowId,
-          height: h != null ? OpenXmlUtils.parseEmu(h).toDouble() : 30,
+          height: h != null ? OpenXmlUtils.parseEmuD(h) : 30,
         ),
       );
-
-      int colIdx = 0;
+      var colIdx = 0;
       for (final tc in OpenXmlUtils.findChildren(tr, 'tc')) {
         final tcPr = OpenXmlUtils.findChild(tc, 'tcPr');
-        final gridSpan = tcPr != null
-            ? OpenXmlUtils.attr(tcPr, 'gridSpan')
-            : null;
-        final rowSpan = tcPr != null
-            ? OpenXmlUtils.attr(tcPr, 'rowSpan')
-            : null;
-
         final txBody = OpenXmlUtils.findChild(tc, 'txBody');
         final paragraphs = txBody != null
-            ? _parseTextBody(txBody)
+            ? _parseTextBody(txBody, _ListStyle(), scheme, fonts)
             : <RichParagraph>[];
-
-        Color? fillColor;
-        if (tcPr != null) {
-          final solidFill = OpenXmlUtils.findChild(tcPr, 'solidFill');
-          fillColor = OpenXmlUtils.parseColor(
-            OpenXmlUtils.findChild(solidFill, 'srgbClr') ??
-                OpenXmlUtils.findChild(solidFill, 'schemeClr'),
-          );
-        }
-
+        final fillColor = OpenXmlUtils.colorIn(
+          OpenXmlUtils.findChild(tcPr, 'solidFill'),
+          scheme: scheme,
+        );
         if (colIdx < columns.length) {
           cells.add(
             TableCell(
               id: _uuid.v4(),
               rowId: rowId,
               colId: columns[colIdx].id,
-              colSpan: gridSpan != null ? int.parse(gridSpan) : 1,
-              rowSpan: rowSpan != null ? int.parse(rowSpan) : 1,
+              colSpan:
+                  int.tryParse(OpenXmlUtils.attr(tcPr, 'gridSpan') ?? '1') ?? 1,
+              rowSpan:
+                  int.tryParse(OpenXmlUtils.attr(tcPr, 'rowSpan') ?? '1') ?? 1,
               paragraphs: paragraphs,
               fillColor: fillColor,
             ),
@@ -645,13 +989,73 @@ class PptxImporter {
 
     return TableElement(
       id: _uuid.v4(),
-      position: Offset(x, y),
-      size: Size(cx, cy),
+      position: off,
+      size: size,
       rows: rows,
       columns: columns,
       cells: cells,
       zIndex: 0,
     );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Geometry / shape type / transitions
+  // ---------------------------------------------------------------------------
+
+  _Xfrm _parseXfrm(XmlElement? xfrm) {
+    if (xfrm == null) return const _Xfrm();
+    final off = OpenXmlUtils.findChild(xfrm, 'off');
+    final ext = OpenXmlUtils.findChild(xfrm, 'ext');
+    final rotAttr = OpenXmlUtils.attr(xfrm, 'rot');
+    return _Xfrm(
+      off: off != null
+          ? Offset(
+              OpenXmlUtils.parseEmuD(OpenXmlUtils.attr(off, 'x')),
+              OpenXmlUtils.parseEmuD(OpenXmlUtils.attr(off, 'y')),
+            )
+          : null,
+      ext: ext != null
+          ? Size(
+              OpenXmlUtils.parseEmuD(OpenXmlUtils.attr(ext, 'cx')),
+              OpenXmlUtils.parseEmuD(OpenXmlUtils.attr(ext, 'cy')),
+            )
+          : null,
+      rot: rotAttr != null ? (int.tryParse(rotAttr) ?? 0) / 60000.0 : 0.0,
+      flipH: OpenXmlUtils.attr(xfrm, 'flipH') == '1',
+      flipV: OpenXmlUtils.attr(xfrm, 'flipV') == '1',
+    );
+  }
+
+  ShapeType _shapeType(String? prst) {
+    switch (prst) {
+      case 'ellipse':
+        return ShapeType.circle;
+      case 'roundRect':
+        return ShapeType.roundedRectangle;
+      case 'triangle':
+        return ShapeType.triangle;
+      case 'diamond':
+        return ShapeType.diamond;
+      case 'pentagon':
+        return ShapeType.pentagon;
+      case 'hexagon':
+        return ShapeType.hexagon;
+      case 'star5':
+        return ShapeType.star;
+      case 'rightArrow':
+      case 'leftArrow':
+      case 'arrow':
+        return ShapeType.arrow;
+      default:
+        return ShapeType.rectangle;
+    }
+  }
+
+  String? _transitionChildName(XmlElement transition) {
+    for (final child in transition.childElements) {
+      return child.name.local;
+    }
+    return OpenXmlUtils.attr(transition, 'type');
   }
 
   TransitionType _parseTransitionType(String? type) {
@@ -684,4 +1088,194 @@ class PptxImporter {
         return TransitionType.none;
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // Package plumbing (relationships + media)
+  // ---------------------------------------------------------------------------
+
+  Map<String, Map<String, String>> _buildRelsMap(Archive archive) {
+    final map = <String, Map<String, String>>{};
+    for (final file in archive.files) {
+      if (!file.name.endsWith('.rels')) continue;
+      final doc = XmlDocument.parse(String.fromCharCodes(file.content));
+      final rels = <String, String>{};
+      for (final rel in doc.rootElement.childElements) {
+        if (rel.name.local != 'Relationship') continue;
+        final id = OpenXmlUtils.attr(rel, 'Id');
+        final target = OpenXmlUtils.attr(rel, 'Target');
+        if (id != null && target != null) {
+          rels[id] = _resolveRelationshipTarget(file.name, target);
+        }
+      }
+      map[file.name] = rels;
+    }
+    return map;
+  }
+
+  String? _findTarget(String relsPath, String dirNeedle) {
+    final m = _relsMap[relsPath];
+    if (m == null) return null;
+    for (final target in m.values) {
+      if (target.contains(dirNeedle)) return target;
+    }
+    return null;
+  }
+
+  Future<Map<String, String>> _extractMediaFiles(Archive archive) async {
+    final mediaEntries = archive.files.where(
+      (file) => file.name.startsWith('ppt/media/') && !file.isDirectory,
+    );
+    if (mediaEntries.isEmpty) return const {};
+    final outputDir = await Directory.systemTemp.createTemp(
+      'powerx_pptx_media_',
+    );
+    final mediaFiles = <String, String>{};
+    for (final entry in mediaEntries) {
+      final fileName = entry.name.split('/').last;
+      final outputFile = File('${outputDir.path}/$fileName');
+      await outputFile.writeAsBytes(List<int>.from(entry.content));
+      mediaFiles[entry.name] = outputFile.path;
+    }
+    return mediaFiles;
+  }
+
+  String _resolveRelationshipTarget(String relsPath, String target) {
+    if (target.startsWith('http://') || target.startsWith('https://')) {
+      return target;
+    }
+    final normalizedTarget = target.replaceAll('\\', '/');
+    if (normalizedTarget.startsWith('/')) {
+      return _normalizePath(normalizedTarget.substring(1));
+    }
+    final sourcePath = _sourcePathForRels(relsPath);
+    final sourceDir = sourcePath.contains('/')
+        ? sourcePath.substring(0, sourcePath.lastIndexOf('/'))
+        : '';
+    return _normalizePath(
+      sourceDir.isEmpty ? normalizedTarget : '$sourceDir/$normalizedTarget',
+    );
+  }
+
+  String _sourcePathForRels(String relsPath) {
+    final normalized = relsPath.replaceAll('\\', '/');
+    const relsMarker = '/_rels/';
+    final markerIndex = normalized.lastIndexOf(relsMarker);
+    if (markerIndex == -1 || !normalized.endsWith('.rels')) {
+      return normalized;
+    }
+    final dir = normalized.substring(0, markerIndex);
+    final fileName = normalized.substring(markerIndex + relsMarker.length);
+    return '$dir/${fileName.substring(0, fileName.length - 5)}';
+  }
+
+  String _relsPathForPart(String partPath) {
+    final normalized = partPath.replaceAll('\\', '/');
+    final slashIndex = normalized.lastIndexOf('/');
+    final dir = slashIndex == -1 ? '' : normalized.substring(0, slashIndex);
+    final fileName = slashIndex == -1
+        ? normalized
+        : normalized.substring(slashIndex + 1);
+    return dir.isEmpty ? '_rels/$fileName.rels' : '$dir/_rels/$fileName.rels';
+  }
+
+  String _normalizePath(String path) {
+    final parts = <String>[];
+    for (final part in path.split('/')) {
+      if (part.isEmpty || part == '.') continue;
+      if (part == '..') {
+        if (parts.isNotEmpty) parts.removeLast();
+      } else {
+        parts.add(part);
+      }
+    }
+    return parts.join('/');
+  }
+}
+
+// =============================================================================
+// Internal resolved structures
+// =============================================================================
+
+class _Xfrm {
+  final Offset? off;
+  final Size? ext;
+  final double rot;
+  final bool flipH;
+  final bool flipV;
+  const _Xfrm({
+    this.off,
+    this.ext,
+    this.rot = 0.0,
+    this.flipH = false,
+    this.flipV = false,
+  });
+}
+
+class _LevelStyle {
+  double? size;
+  Color? color;
+  String? font;
+  bool? bold;
+  bool? italic;
+  TextAlign? align;
+}
+
+class _ListStyle {
+  final Map<int, _LevelStyle> levels = {};
+  _LevelStyle? at(int level) => levels[level] ?? levels[0];
+}
+
+class _Ph {
+  final String type;
+  final String idx;
+  final Offset? off;
+  final Size? size;
+  final double rot;
+  final _ListStyle lstStyle;
+  _Ph({
+    required this.type,
+    required this.idx,
+    required this.off,
+    required this.size,
+    required this.rot,
+    required this.lstStyle,
+  });
+}
+
+class _Master {
+  final String path;
+  final ColorScheme scheme;
+  final FontScheme fonts;
+  final XmlElement? bg;
+  final List<_Ph> placeholders;
+  final List<XmlElement> decorative;
+  final _ListStyle titleStyle;
+  final _ListStyle bodyStyle;
+  final _ListStyle otherStyle;
+  _Master({
+    required this.path,
+    required this.scheme,
+    required this.fonts,
+    required this.bg,
+    required this.placeholders,
+    required this.decorative,
+    required this.titleStyle,
+    required this.bodyStyle,
+    required this.otherStyle,
+  });
+}
+
+class _Layout {
+  final String path;
+  final String masterPath;
+  final XmlElement? bg;
+  final List<_Ph> placeholders;
+  final List<XmlElement> decorative;
+  _Layout({
+    required this.path,
+    required this.masterPath,
+    required this.bg,
+    required this.placeholders,
+    required this.decorative,
+  });
 }

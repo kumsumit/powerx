@@ -161,8 +161,12 @@ class _PresentationViewState extends State<PresentationView>
             setState(() {
               currentIndex--;
               // Start on the last animation of the previous slide
-              _playedAnimationsCount =
-                  widget.presentation.slides[currentIndex].animations.animations.length;
+              _playedAnimationsCount = widget
+                  .presentation
+                  .slides[currentIndex]
+                  .animations
+                  .animations
+                  .length;
               _inkStrokes.clear();
               widget.onPrevious();
             });
@@ -247,11 +251,14 @@ class _PresentationViewState extends State<PresentationView>
                           child: Container(
                             width: slideSize.width,
                             height: slideSize.height,
-                            color: slide.backgroundColorOverride ?? Colors.white,
+                            color:
+                                slide.backgroundColorOverride ?? Colors.white,
                             child: Stack(
                               children: [
                                 // Slide elements
-                                ...slide.elements.map((e) => _buildElement(e, slide)),
+                                ...slide.elements.map(
+                                  (e) => _buildElement(e, slide),
+                                ),
                                 // Slideshow Ink drawing canvas
                                 if (_penEnabled || _inkStrokes.isNotEmpty)
                                   Positioned.fill(
@@ -300,9 +307,7 @@ class _PresentationViewState extends State<PresentationView>
                 bottom: _showControls ? 20 : -80,
                 left: 0,
                 right: 0,
-                child: Center(
-                  child: _buildControlsBar(context),
-                ),
+                child: Center(child: _buildControlsBar(context)),
               ),
             ],
           ),
@@ -331,23 +336,35 @@ class _PresentationViewState extends State<PresentationView>
         mainAxisSize: MainAxisSize.min,
         children: [
           IconButton(
-            icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white, size: 18),
+            icon: const Icon(
+              Icons.arrow_back_ios_new,
+              color: Colors.white,
+              size: 18,
+            ),
             tooltip: 'Previous',
             onPressed: _prev,
           ),
           Text(
             '${currentIndex + 1} / ${widget.presentation.slides.length}',
-            style: const TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600),
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
           ),
           IconButton(
-            icon: const Icon(Icons.arrow_forward_ios, color: Colors.white, size: 18),
+            icon: const Icon(
+              Icons.arrow_forward_ios,
+              color: Colors.white,
+              size: 18,
+            ),
             tooltip: 'Next / Play Animation',
             onPressed: _next,
           ),
           const SizedBox(width: 8),
           Container(width: 1, height: 24, color: Colors.white24),
           const SizedBox(width: 8),
-          
+
           // Laser Pointer toggle
           IconButton(
             icon: Icon(
@@ -402,7 +419,11 @@ class _PresentationViewState extends State<PresentationView>
               },
             ),
             IconButton(
-              icon: const Icon(Icons.delete_forever, color: Colors.redAccent, size: 18),
+              icon: const Icon(
+                Icons.delete_forever,
+                color: Colors.redAccent,
+                size: 18,
+              ),
               tooltip: 'Clear Drawings',
               onPressed: () {
                 setState(() => _inkStrokes.clear());
@@ -464,7 +485,13 @@ class _PresentationViewState extends State<PresentationView>
             width: 2,
           ),
           boxShadow: isSelected
-              ? [BoxShadow(color: Colors.black26, blurRadius: 2, spreadRadius: 1)]
+              ? [
+                  BoxShadow(
+                    color: Colors.black26,
+                    blurRadius: 2,
+                    spreadRadius: 1,
+                  ),
+                ]
               : null,
         ),
       ),
@@ -475,7 +502,8 @@ class _PresentationViewState extends State<PresentationView>
   Widget _buildSlidePicker(BuildContext context) {
     final slideSize = widget.presentation.settings.slideSize;
     final double thumbnailWidth = 120.0;
-    final double thumbnailHeight = thumbnailWidth * slideSize.height / slideSize.width;
+    final double thumbnailHeight =
+        thumbnailWidth * slideSize.height / slideSize.width;
     final double scaleX = thumbnailWidth / slideSize.width;
     final double scaleY = thumbnailHeight / slideSize.height;
 
@@ -496,7 +524,11 @@ class _PresentationViewState extends State<PresentationView>
           children: [
             const Text(
               'Select Slide',
-              style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold),
+              style: TextStyle(
+                color: Colors.white70,
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+              ),
             ),
             const SizedBox(height: 8),
             Expanded(
@@ -522,7 +554,8 @@ class _PresentationViewState extends State<PresentationView>
                         children: [
                           Positioned.fill(
                             child: Container(
-                              color: slide.backgroundColorOverride ?? Colors.white,
+                              color:
+                                  slide.backgroundColorOverride ?? Colors.white,
                               child: Stack(
                                 children: slide.elements.map((e) {
                                   // Draw tiny elements for picker
@@ -533,10 +566,11 @@ class _PresentationViewState extends State<PresentationView>
                                     height: e.size.height * scaleY,
                                     child: Container(
                                       color: e is TextElement
-                                          ? (e.fillColor ?? Colors.grey.withOpacity(0.2))
+                                          ? (e.fillColor ??
+                                                Colors.grey.withOpacity(0.2))
                                           : e is ShapeElement
-                                              ? e.fillColor
-                                              : Colors.blue.withOpacity(0.2),
+                                          ? e.fillColor
+                                          : Colors.blue.withOpacity(0.2),
                                     ),
                                   );
                                 }).toList(),
@@ -547,11 +581,17 @@ class _PresentationViewState extends State<PresentationView>
                             bottom: 4,
                             left: 4,
                             child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 4,
+                                vertical: 1,
+                              ),
                               color: Colors.black54,
                               child: Text(
                                 '${index + 1}',
-                                style: const TextStyle(color: Colors.white, fontSize: 10),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                ),
                               ),
                             ),
                           ),
@@ -573,47 +613,18 @@ class _PresentationViewState extends State<PresentationView>
     Widget elementWidget;
 
     if (e is TextElement) {
-      elementWidget = Container(
-        color: e.fillColor,
-        padding: e.padding,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: e.paragraphs.map((para) {
-            return RichText(
-              text: TextSpan(
-                children: para.runs.map((run) {
-                  return TextSpan(
-                    text: run.text,
-                    style: TextStyle(
-                      fontFamily: run.fontFamily,
-                      fontSize: run.fontSize,
-                      color: run.color,
-                      fontWeight: run.bold ? FontWeight.bold : FontWeight.normal,
-                      fontStyle: run.italic ? ui.FontStyle.italic : ui.FontStyle.normal,
-                      decoration: run.underline
-                          ? TextDecoration.underline
-                          : run.strikethrough
-                              ? TextDecoration.lineThrough
-                              : TextDecoration.none,
-                    ),
-                  );
-                }).toList(),
-              ),
-            );
-          }).toList(),
-        ),
-      );
+      elementWidget = _buildTextElement(e);
     } else if (e is ShapeElement) {
       elementWidget = ShapeRenderer(shape: e);
     } else if (e is ImageElement) {
-      elementWidget = e.imagePath.isEmpty
+      final imageFile = File(e.imagePath);
+      elementWidget = e.imagePath.isEmpty || !imageFile.existsSync()
           ? Container(
               color: Colors.grey[300],
               child: const Center(child: Icon(Icons.image, color: Colors.grey)),
             )
           : Image.file(
-              File(e.imagePath),
+              imageFile,
               fit: _mapFillMode(e.fillMode),
               width: e.size.width,
               height: e.size.height,
@@ -667,8 +678,9 @@ class _PresentationViewState extends State<PresentationView>
     }
 
     // Wrap the element in slide-level animations
-    final elementAnims =
-        slide.animations.animations.where((a) => a.targetElementId == e.id).toList();
+    final elementAnims = slide.animations.animations
+        .where((a) => a.targetElementId == e.id)
+        .toList();
 
     Widget animatedWidget = AnimationEngine.buildAnimatedElement(
       element: e,
@@ -689,6 +701,51 @@ class _PresentationViewState extends State<PresentationView>
         child: animatedWidget,
       ),
     );
+  }
+
+  Widget _buildTextElement(TextElement e) {
+    return Container(
+      color: e.fillColor,
+      child: ClipRect(
+        child: Padding(
+          padding: e.padding,
+          child: RichText(
+            overflow: TextOverflow.clip,
+            text: TextSpan(children: _buildTextSpans(e)),
+          ),
+        ),
+      ),
+    );
+  }
+
+  List<InlineSpan> _buildTextSpans(TextElement e) {
+    final spans = <InlineSpan>[];
+    for (var i = 0; i < e.paragraphs.length; i++) {
+      final para = e.paragraphs[i];
+      for (final run in para.runs) {
+        spans.add(
+          TextSpan(
+            text: run.text,
+            style: TextStyle(
+              fontFamily: run.fontFamily,
+              fontSize: run.fontSize,
+              color: run.color,
+              fontWeight: run.bold ? FontWeight.bold : FontWeight.normal,
+              fontStyle: run.italic ? ui.FontStyle.italic : ui.FontStyle.normal,
+              decoration: run.underline
+                  ? TextDecoration.underline
+                  : run.strikethrough
+                  ? TextDecoration.lineThrough
+                  : TextDecoration.none,
+            ),
+          ),
+        );
+      }
+      if (i < e.paragraphs.length - 1) {
+        spans.add(const TextSpan(text: '\n'));
+      }
+    }
+    return spans;
   }
 
   BoxFit _mapFillMode(ImageFillMode mode) {
