@@ -60,7 +60,7 @@ void main() {
       </p:sp>
       <p:pic>
         <p:nvPicPr><p:cNvPr id="3" name="Picture 1"/></p:nvPicPr>
-        <p:blipFill><a:blip r:embed="rId2"/></p:blipFill>
+        <p:blipFill><a:blip r:embed="rId2"><a:alphaModFix amt="14000"/></a:blip></p:blipFill>
         <p:spPr>
           <a:xfrm>
             <a:off x="0" y="0"/>
@@ -102,6 +102,7 @@ void main() {
         .single;
     expect(image.imagePath, isNot('ppt/media/image1.png'));
     expect(File(image.imagePath).existsSync(), isTrue);
+    expect(image.opacity, closeTo(0.14, 0.001));
   });
 
   test(

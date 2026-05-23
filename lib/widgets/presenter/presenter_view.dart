@@ -287,17 +287,22 @@ class _PresenterViewState extends State<PresenterView> {
       elementWidget = ShapeRenderer(shape: e);
     } else if (e is ImageElement) {
       final imageFile = File(e.imagePath);
-      elementWidget = e.imagePath.isEmpty || !imageFile.existsSync()
-          ? Container(
-              color: Colors.grey[300],
-              child: const Center(child: Icon(Icons.image, color: Colors.grey)),
-            )
-          : Image.file(
-              imageFile,
-              fit: BoxFit.fill,
-              width: e.size.width,
-              height: e.size.height,
-            );
+      if (e.imagePath.isEmpty || !imageFile.existsSync()) {
+        elementWidget = Container(
+          color: Colors.grey[300],
+          child: const Center(child: Icon(Icons.image, color: Colors.grey)),
+        );
+      } else {
+        final image = Image.file(
+          imageFile,
+          fit: BoxFit.fill,
+          width: e.size.width,
+          height: e.size.height,
+        );
+        elementWidget = e.opacity >= 1
+            ? image
+            : Opacity(opacity: e.opacity, child: image);
+      }
     } else if (e is pt.TableElement) {
       elementWidget = TableWidget(table: e);
     } else if (e is ChartElement) {
