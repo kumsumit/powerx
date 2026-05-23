@@ -1,242 +1,149 @@
+import 'dart:ui';
 import 'package:equatable/equatable.dart';
-import 'package:flutter/material.dart';
+import 'elements.dart';
+import 'animation.dart';
+import 'slide_master.dart';
+import 'theme.dart';
 
 class Presentation extends Equatable {
   final String id;
   final String title;
   final List<Slide> slides;
-  final SlideTheme theme;
+  final List<SlideMaster> masters;
+  final List<SlideLayout> layouts;
+  final PresentationTheme theme;
   final int activeSlideIndex;
+  final PresentationSettings settings;
+  final String? filePath;
 
   const Presentation({
     required this.id,
     required this.title,
     required this.slides,
-    this.theme = const SlideTheme(),
+    this.masters = const [],
+    this.layouts = const [],
+    required this.theme,
     this.activeSlideIndex = 0,
+    this.settings = const PresentationSettings(),
+    this.filePath,
   });
 
   Presentation copyWith({
     String? title,
     List<Slide>? slides,
-    SlideTheme? theme,
+    List<SlideMaster>? masters,
+    List<SlideLayout>? layouts,
+    PresentationTheme? theme,
     int? activeSlideIndex,
-  }) {
-    return Presentation(
-      id: id,
-      title: title ?? this.title,
-      slides: slides ?? this.slides,
-      theme: theme ?? this.theme,
-      activeSlideIndex: activeSlideIndex ?? this.activeSlideIndex,
-    );
-  }
+    PresentationSettings? settings,
+    String? filePath,
+  }) => Presentation(
+    id: id,
+    title: title ?? this.title,
+    slides: slides ?? this.slides,
+    masters: masters ?? this.masters,
+    layouts: layouts ?? this.layouts,
+    theme: theme ?? this.theme,
+    activeSlideIndex: activeSlideIndex ?? this.activeSlideIndex,
+    settings: settings ?? this.settings,
+    filePath: filePath ?? this.filePath,
+  );
+
+  Slide get activeSlide => slides[activeSlideIndex];
 
   @override
-  List<Object?> get props => [id, title, slides, theme, activeSlideIndex];
+  List<Object?> get props => [
+    id,
+    title,
+    slides,
+    masters,
+    layouts,
+    theme,
+    activeSlideIndex,
+    settings,
+  ];
 }
 
 class Slide extends Equatable {
   final String id;
-  final Color backgroundColor;
+  final String? layoutId;
+  final String? masterId;
+  final Color? backgroundColorOverride;
+  final BackgroundFill? backgroundFillOverride;
   final List<SlideElement> elements;
-  final String? transition; // 'fade', 'push', etc.
+  final SlideTransition transition;
+  final AnimationTimeline animations;
   final String? notes;
+  final bool hidden;
+  final int slideNumber;
 
   const Slide({
     required this.id,
-    this.backgroundColor = const Color(0xFFFFFFFF),
+    this.layoutId,
+    this.masterId,
+    this.backgroundColorOverride,
+    this.backgroundFillOverride,
     this.elements = const [],
-    this.transition,
+    this.transition = const SlideTransition(),
+    this.animations = const AnimationTimeline(),
     this.notes,
+    this.hidden = false,
+    this.slideNumber = 0,
   });
 
   Slide copyWith({
-    Color? backgroundColor,
+    String? id,
+    String? layoutId,
+    String? masterId,
+    Color? backgroundColorOverride,
+    BackgroundFill? backgroundFillOverride,
     List<SlideElement>? elements,
-    String? transition,
+    SlideTransition? transition,
+    AnimationTimeline? animations,
     String? notes,
-  }) {
-    return Slide(
-      id: id,
-      backgroundColor: backgroundColor ?? this.backgroundColor,
-      elements: elements ?? this.elements,
-      transition: transition ?? this.transition,
-      notes: notes ?? this.notes,
-    );
-  }
+    bool? hidden,
+    int? slideNumber,
+  }) => Slide(
+    id: id ?? this.id,
+    layoutId: layoutId ?? this.layoutId,
+    masterId: masterId ?? this.masterId,
+    backgroundColorOverride:
+        backgroundColorOverride ?? this.backgroundColorOverride,
+    backgroundFillOverride:
+        backgroundFillOverride ?? this.backgroundFillOverride,
+    elements: elements ?? this.elements,
+    transition: transition ?? this.transition,
+    animations: animations ?? this.animations,
+    notes: notes ?? this.notes,
+    hidden: hidden ?? this.hidden,
+    slideNumber: slideNumber ?? this.slideNumber,
+  );
 
   @override
-  List<Object?> get props => [id, backgroundColor, elements, transition, notes];
+  List<Object?> get props => [
+    id,
+    layoutId,
+    elements,
+    transition,
+    animations,
+    hidden,
+    slideNumber,
+  ];
 }
 
-abstract class SlideElement extends Equatable {
-  final String id;
-  final Offset position;
-  final Size size;
-  final double rotation;
-  final bool isLocked;
-  final int zIndex;
-
-  const SlideElement({
-    required this.id,
-    required this.position,
-    required this.size,
-    this.rotation = 0.0,
-    this.isLocked = false,
-    required this.zIndex,
+class PresentationSettings extends Equatable {
+  final Size slideSize;
+  final bool loopUntilEsc;
+  final bool showPresenterView;
+  final bool useTimings;
+  final bool showMediaControls;
+  const PresentationSettings({
+    this.slideSize = const Size(960, 540),
+    this.loopUntilEsc = false,
+    this.showPresenterView = true,
+    this.useTimings = false,
+    this.showMediaControls = true,
   });
-
-  SlideElement copyWith({
-    Offset? position,
-    Size? size,
-    double? rotation,
-    bool? isLocked,
-    int? zIndex,
-  });
-}
-
-class TextElement extends SlideElement {
-  final String text;
-  final TextStyle style;
-  final TextAlign align;
-
-  const TextElement({
-    required super.id,
-    required super.position,
-    required super.size,
-    super.rotation,
-    super.isLocked,
-    required super.zIndex,
-    this.text = 'Click to add text',
-    this.style =  const TextStyle(fontSize: 18, color:  Colors.black),
-    this.align = TextAlign.left,
-  });
-
   @override
-  TextElement copyWith({
-    Offset? position,
-    Size? size,
-    double? rotation,
-    bool? isLocked,
-    int? zIndex,
-    String? text,
-    TextStyle? style,
-    TextAlign? align,
-  }) {
-    return TextElement(
-      id: id,
-      position: position ?? this.position,
-      size: size ?? this.size,
-      rotation: rotation ?? this.rotation,
-      isLocked: isLocked ?? this.isLocked,
-      zIndex: zIndex ?? this.zIndex,
-      text: text ?? this.text,
-      style: style ?? this.style,
-      align: align ?? this.align,
-    );
-  }
-
-  @override
-  List<Object?> get props => [id, position, size, rotation, text, style, align, zIndex];
-}
-
-class ShapeElement extends SlideElement {
-  final Color fillColor;
-  final Color strokeColor;
-  final double strokeWidth;
-  final ShapeType shapeType;
-
-  const ShapeElement({
-    required super.id,
-    required super.position,
-    required super.size,
-    super.rotation,
-    super.isLocked,
-    required super.zIndex,
-    this.fillColor = const Color(0xFF4472C4),
-    this.strokeColor = const Color(0xFF000000),
-    this.strokeWidth = 1.0,
-    this.shapeType = ShapeType.rectangle,
-  });
-
-  @override
-  ShapeElement copyWith({
-    Offset? position,
-    Size? size,
-    double? rotation,
-    bool? isLocked,
-    int? zIndex,
-    Color? fillColor,
-    Color? strokeColor,
-    double? strokeWidth,
-    ShapeType? shapeType,
-  }) {
-    return ShapeElement(
-      id: id,
-      position: position ?? this.position,
-      size: size ?? this.size,
-      rotation: rotation ?? this.rotation,
-      isLocked: isLocked ?? this.isLocked,
-      zIndex: zIndex ?? this.zIndex,
-      fillColor: fillColor ?? this.fillColor,
-      strokeColor: strokeColor ?? this.strokeColor,
-      strokeWidth: strokeWidth ?? this.strokeWidth,
-      shapeType: shapeType ?? this.shapeType,
-    );
-  }
-
-  @override
-  List<Object?> get props => [id, position, size, fillColor, shapeType, zIndex];
-}
-
-class ImageElement extends SlideElement {
-  final String imagePath; // local path or base64
-
-  const ImageElement({
-    required super.id,
-    required super.position,
-    required super.size,
-    super.rotation,
-    super.isLocked,
-    required super.zIndex,
-    required this.imagePath,
-  });
-
-  @override
-  ImageElement copyWith({
-    Offset? position,
-    Size? size,
-    double? rotation,
-    bool? isLocked,
-    int? zIndex,
-    String? imagePath,
-  }) {
-    return ImageElement(
-      id: id,
-      position: position ?? this.position,
-      size: size ?? this.size,
-      rotation: rotation ?? this.rotation,
-      isLocked: isLocked ?? this.isLocked,
-      zIndex: zIndex ?? this.zIndex,
-      imagePath: imagePath ?? this.imagePath,
-    );
-  }
-
-  @override
-  List<Object?> get props => [id, position, size, imagePath, zIndex];
-}
-
-enum ShapeType { rectangle, circle, triangle, arrow }
-
-class SlideTheme extends Equatable {
-  final Color primaryColor;
-  final String fontFamily;
-
-  const SlideTheme({
-    this.primaryColor = const Color(0xFF4472C4),
-    this.fontFamily = 'Calibri',
-  });
-
-  @override
-  List<Object?> get props => [primaryColor, fontFamily];
+  List<Object?> get props => [slideSize, loopUntilEsc, showPresenterView];
 }
