@@ -361,11 +361,58 @@ class EditorCubit extends Cubit<EditorState> {
   void resizeElement(String id, Size newSize, {Offset? newPosition}) {
     final slide = state.activeSlide;
     final element = slide.elements.firstWhere((e) => e.id == id);
-    final updated = element.copyWith(
+    
+    SlideElement updated = element.copyWith(
       size: newSize,
       position: newPosition ?? element.position,
     );
+
+    if (element is pt.TableElement && element.size.width > 0 && element.size.height > 0) {
+      final scaleX = newSize.width / element.size.width;
+      final scaleY = newSize.height / element.size.height;
+      final updatedColumns = element.columns.map((c) => pt.TableColumn(id: c.id, width: c.width * scaleX)).toList();
+      final updatedRows = element.rows.map((r) => pt.TableRow(id: r.id, height: r.height * scaleY)).toList();
+      updated = (updated as pt.TableElement).copyWith(
+        columns: updatedColumns,
+        rows: updatedRows,
+      );
+    }
+
     updateElement(updated);
+  }
+
+  void rotateElement(String id, double rotation) {
+    final slide = state.activeSlide;
+    final element = slide.elements.firstWhere((e) => e.id == id);
+    final updated = element.copyWith(rotation: rotation);
+    updateElement(updated);
+  }
+
+  void updateSlideSize(Size size) {
+    _updatePresentation(
+      state.presentation.copyWith(
+        settings: state.presentation.settings.copyWith(slideSize: size),
+      ),
+    );
+  }
+
+  void addAnimationToElement(String elementId, AnimationType type, AnimationCategory category) {
+    final slide = state.activeSlide;
+    final newAnim = SlideAnimation(
+      id: _uuid.v4(),
+      targetElementId: elementId,
+      type: type,
+      category: category,
+    );
+    final list = List<SlideAnimation>.from(slide.animations.animations)..add(newAnim);
+    updateSlideAnimations(AnimationTimeline(animations: list));
+  }
+
+  void removeAnimationFromElement(String elementId, String animationId) {
+    final slide = state.activeSlide;
+    final list = List<SlideAnimation>.from(slide.animations.animations)
+      ..removeWhere((a) => a.id == animationId);
+    updateSlideAnimations(AnimationTimeline(animations: list));
   }
 
   void bringToFront(String id) {

@@ -4,41 +4,101 @@ import '../../models/elements.dart';
 
 class SelectionHandles extends StatelessWidget {
   final SlideElement element;
+  final double zoom;
   final Function(Size newSize, Offset newPosition) onResize;
+  final Function(double newRotation)? onRotate;
 
-  const SelectionHandles({super.key, required this.element, required this.onResize});
+  const SelectionHandles({
+    super.key,
+    required this.element,
+    required this.zoom,
+    required this.onResize,
+    this.onRotate,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Stack(
       clipBehavior: Clip.none,
       children: [
+        // Edge resize strips (drawn first so corner handles sit on top).
+        _buildEdge(HandlePosition.topCenter, element.size),
+        _buildEdge(HandlePosition.bottomCenter, element.size),
+        _buildEdge(HandlePosition.middleLeft, element.size),
+        _buildEdge(HandlePosition.middleRight, element.size),
         // Corner handles
         _buildHandle(HandlePosition.topLeft, element.position, element.size),
         _buildHandle(HandlePosition.topCenter, element.position, element.size),
         _buildHandle(HandlePosition.topRight, element.position, element.size),
         _buildHandle(HandlePosition.middleLeft, element.position, element.size),
-        _buildHandle(HandlePosition.middleRight, element.position, element.size),
+        _buildHandle(
+          HandlePosition.middleRight,
+          element.position,
+          element.size,
+        ),
         _buildHandle(HandlePosition.bottomLeft, element.position, element.size),
-        _buildHandle(HandlePosition.bottomCenter, element.position, element.size),
-        _buildHandle(HandlePosition.bottomRight, element.position, element.size),
+        _buildHandle(
+          HandlePosition.bottomCenter,
+          element.position,
+          element.size,
+        ),
+        _buildHandle(
+          HandlePosition.bottomRight,
+          element.position,
+          element.size,
+        ),
+        // Line connecting element to rotation handle
+        Positioned(
+          left: element.size.width / 2 - 0.5,
+          top: -20,
+          child: Container(
+            width: 1,
+            height: 20,
+            color: const Color(0xFF4472C4),
+          ),
+        ),
         // Rotation handle
         Positioned(
-          left: element.size.width / 2 - 6,
-          top: -20,
+          left: element.size.width / 2 - 10,
+          top: -30,
           child: GestureDetector(
             onPanUpdate: (details) {
-              // Rotation logic would go here
+              if (onRotate != null) {
+                final renderBox = context.findRenderObject() as RenderBox?;
+                if (renderBox != null) {
+                  final centerGlobal = renderBox.localToGlobal(
+                    Offset(element.size.width / 2, element.size.height / 2),
+                  );
+                  final diff = details.globalPosition - centerGlobal;
+                  double angleRad = atan2(diff.dy, diff.dx);
+                  double rotation = (angleRad + pi / 2) * 180 / pi;
+                  rotation = (rotation % 360 + 360) % 360;
+                  onRotate!(rotation);
+                }
+              }
             },
             child: Container(
-              width: 12,
-              height: 12,
+              width: 20,
+              height: 20,
               decoration: const BoxDecoration(
                 color: Colors.white,
                 shape: BoxShape.circle,
-                border: Border.fromBorderSide(BorderSide(color: Color(0xFF4472C4), width: 1.5)),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black12,
+                    blurRadius: 4,
+                    offset: Offset(0, 2),
+                  ),
+                ],
+                border: Border.fromBorderSide(
+                  BorderSide(color: Color(0xFF4472C4), width: 1.5),
+                ),
               ),
-              child: const Icon(Icons.rotate_right, size: 8, color: Color(0xFF4472C4)),
+              child: const Icon(
+                Icons.rotate_right,
+                size: 11,
+                color: Color(0xFF4472C4),
+              ),
             ),
           ),
         ),
@@ -47,33 +107,42 @@ class SelectionHandles extends StatelessWidget {
   }
 
   Widget _buildHandle(HandlePosition pos, Offset position, Size size) {
-    final handleSize = 8.0;
+    final handleSize = 8.0 / zoom;
+    final hitSize = 20.0 / zoom;
     late final double left, top;
 
     switch (pos) {
       case HandlePosition.topLeft:
-        left = -handleSize / 2; top = -handleSize / 2;
+        left = -hitSize / 2;
+        top = -hitSize / 2;
         break;
       case HandlePosition.topCenter:
-        left = size.width / 2 - handleSize / 2; top = -handleSize / 2;
+        left = size.width / 2 - hitSize / 2;
+        top = -hitSize / 2;
         break;
       case HandlePosition.topRight:
-        left = size.width - handleSize / 2; top = -handleSize / 2;
+        left = size.width - hitSize / 2;
+        top = -hitSize / 2;
         break;
       case HandlePosition.middleLeft:
-        left = -handleSize / 2; top = size.height / 2 - handleSize / 2;
+        left = -hitSize / 2;
+        top = size.height / 2 - hitSize / 2;
         break;
       case HandlePosition.middleRight:
-        left = size.width - handleSize / 2; top = size.height / 2 - handleSize / 2;
+        left = size.width - hitSize / 2;
+        top = size.height / 2 - hitSize / 2;
         break;
       case HandlePosition.bottomLeft:
-        left = -handleSize / 2; top = size.height - handleSize / 2;
+        left = -hitSize / 2;
+        top = size.height - hitSize / 2;
         break;
       case HandlePosition.bottomCenter:
-        left = size.width / 2 - handleSize / 2; top = size.height - handleSize / 2;
+        left = size.width / 2 - hitSize / 2;
+        top = size.height - hitSize / 2;
         break;
       case HandlePosition.bottomRight:
-        left = size.width - handleSize / 2; top = size.height - handleSize / 2;
+        left = size.width - hitSize / 2;
+        top = size.height - hitSize / 2;
         break;
     }
 
@@ -83,13 +152,24 @@ class SelectionHandles extends StatelessWidget {
       child: MouseRegion(
         cursor: _getCursor(pos),
         child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          // delta is already in unscaled slide coords (inside Transform.scale).
           onPanUpdate: (details) => _handleResize(pos, details.delta),
-          child: Container(
-            width: handleSize,
-            height: handleSize,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              border: Border.all(color: const Color(0xFF4472C4), width: 1.5),
+          child: SizedBox(
+            width: hitSize,
+            height: hitSize,
+            child: Center(
+              child: Container(
+                width: handleSize,
+                height: handleSize,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: Border.all(
+                    color: const Color(0xFF4472C4),
+                    width: 1.5 / zoom,
+                  ),
+                ),
+              ),
             ),
           ),
         ),
@@ -97,43 +177,158 @@ class SelectionHandles extends StatelessWidget {
     );
   }
 
-  void _handleResize(HandlePosition pos, Offset delta) {
-    var newSize = element.size;
-    var newPos = element.position;
+  Widget _buildEdge(HandlePosition pos, Size size) {
+    final edgeHitSize = 12.0 / zoom;
+    late final double left, top, width, height;
 
     switch (pos) {
-      case HandlePosition.topLeft:
-        newSize = Size(max(10, element.size.width - delta.dx), max(10, element.size.height - delta.dy));
-        newPos = Offset(element.position.dx + delta.dx, element.position.dy + delta.dy);
-        break;
       case HandlePosition.topCenter:
-        newSize = Size(element.size.width, max(10, element.size.height - delta.dy));
-        newPos = Offset(element.position.dx, element.position.dy + delta.dy);
-        break;
-      case HandlePosition.topRight:
-        newSize = Size(max(10, element.size.width + delta.dx), max(10, element.size.height - delta.dy));
-        newPos = Offset(element.position.dx, element.position.dy + delta.dy);
-        break;
-      case HandlePosition.middleLeft:
-        newSize = Size(max(10, element.size.width - delta.dx), element.size.height);
-        newPos = Offset(element.position.dx + delta.dx, element.position.dy);
-        break;
-      case HandlePosition.middleRight:
-        newSize = Size(max(10, element.size.width + delta.dx), element.size.height);
-        break;
-      case HandlePosition.bottomLeft:
-        newSize = Size(max(10, element.size.width - delta.dx), max(10, element.size.height + delta.dy));
-        newPos = Offset(element.position.dx + delta.dx, element.position.dy);
+        left = edgeHitSize / 2;
+        top = -edgeHitSize / 2;
+        width = max(0, size.width - edgeHitSize);
+        height = edgeHitSize;
         break;
       case HandlePosition.bottomCenter:
-        newSize = Size(element.size.width, max(10, element.size.height + delta.dy));
+        left = edgeHitSize / 2;
+        top = size.height - edgeHitSize / 2;
+        width = max(0, size.width - edgeHitSize);
+        height = edgeHitSize;
+        break;
+      case HandlePosition.middleLeft:
+        left = -edgeHitSize / 2;
+        top = edgeHitSize / 2;
+        width = edgeHitSize;
+        height = max(0, size.height - edgeHitSize);
+        break;
+      case HandlePosition.middleRight:
+        left = size.width - edgeHitSize / 2;
+        top = edgeHitSize / 2;
+        width = edgeHitSize;
+        height = max(0, size.height - edgeHitSize);
+        break;
+      case HandlePosition.topLeft:
+      case HandlePosition.topRight:
+      case HandlePosition.bottomLeft:
+      case HandlePosition.bottomRight:
+        return const SizedBox.shrink();
+    }
+
+    return Positioned(
+      left: left,
+      top: top,
+      width: width,
+      height: height,
+      child: MouseRegion(
+        cursor: _getCursor(pos),
+        child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onPanUpdate: (details) => _handleResize(pos, details.delta),
+          child: const SizedBox.expand(),
+        ),
+      ),
+    );
+  }
+
+  void _handleResize(HandlePosition pos, Offset delta) {
+    const minSize = 10.0;
+    
+    final double rad = element.rotation * pi / 180;
+    final double cosTheta = cos(rad);
+    final double sinTheta = sin(rad);
+
+    // Helper to rotate a local offset by the current rotation angle
+    Offset rotate(Offset offset) {
+      return Offset(
+        offset.dx * cosTheta - offset.dy * sinTheta,
+        offset.dx * sinTheta + offset.dy * cosTheta,
+      );
+    }
+
+    final double w = element.size.width;
+    final double h = element.size.height;
+    final center = Offset(element.position.dx + w / 2, element.position.dy + h / 2);
+
+    // Determine the fixed point and size changes based on the handle position and local delta
+    late final Offset localFixed;
+    double newW = w;
+    double newH = h;
+    
+    switch (pos) {
+      case HandlePosition.topLeft:
+        newW = max(minSize, w - delta.dx);
+        newH = max(minSize, h - delta.dy);
+        localFixed = Offset(w / 2, h / 2); // Bottom-right is fixed
+        break;
+      case HandlePosition.topCenter:
+        newH = max(minSize, h - delta.dy);
+        localFixed = Offset(0, h / 2); // Bottom-center is fixed
+        break;
+      case HandlePosition.topRight:
+        newW = max(minSize, w + delta.dx);
+        newH = max(minSize, h - delta.dy);
+        localFixed = Offset(-w / 2, h / 2); // Bottom-left is fixed
+        break;
+      case HandlePosition.middleLeft:
+        newW = max(minSize, w - delta.dx);
+        localFixed = Offset(w / 2, 0); // Middle-right is fixed
+        break;
+      case HandlePosition.middleRight:
+        newW = max(minSize, w + delta.dx);
+        localFixed = Offset(-w / 2, 0); // Middle-left is fixed
+        break;
+      case HandlePosition.bottomLeft:
+        newW = max(minSize, w - delta.dx);
+        newH = max(minSize, h + delta.dy);
+        localFixed = Offset(w / 2, -h / 2); // Top-right is fixed
+        break;
+      case HandlePosition.bottomCenter:
+        newH = max(minSize, h + delta.dy);
+        localFixed = Offset(0, -h / 2); // Top-center is fixed
         break;
       case HandlePosition.bottomRight:
-        newSize = Size(max(10, element.size.width + delta.dx), max(10, element.size.height + delta.dy));
+        newW = max(minSize, w + delta.dx);
+        newH = max(minSize, h + delta.dy);
+        localFixed = Offset(-w / 2, -h / 2); // Top-left is fixed
         break;
     }
 
-    onResize(newSize, newPos);
+    // Fixed point in canvas space:
+    final globalFixed = center + rotate(localFixed);
+
+    // New local offset of the fixed point from the new center:
+    late final Offset newLocalFixed;
+    switch (pos) {
+      case HandlePosition.topLeft:
+        newLocalFixed = Offset(newW / 2, newH / 2);
+        break;
+      case HandlePosition.topCenter:
+        newLocalFixed = Offset(0, newH / 2);
+        break;
+      case HandlePosition.topRight:
+        newLocalFixed = Offset(-newW / 2, newH / 2);
+        break;
+      case HandlePosition.middleLeft:
+        newLocalFixed = Offset(newW / 2, 0);
+        break;
+      case HandlePosition.middleRight:
+        newLocalFixed = Offset(-newW / 2, 0);
+        break;
+      case HandlePosition.bottomLeft:
+        newLocalFixed = Offset(newW / 2, -newH / 2);
+        break;
+      case HandlePosition.bottomCenter:
+        newLocalFixed = Offset(0, -newH / 2);
+        break;
+      case HandlePosition.bottomRight:
+        newLocalFixed = Offset(-newW / 2, -newH / 2);
+        break;
+    }
+
+    // New center is globalFixed minus the rotated newLocalFixed offset:
+    final newCenter = globalFixed - rotate(newLocalFixed);
+    final newPos = Offset(newCenter.dx - newW / 2, newCenter.dy - newH / 2);
+
+    onResize(Size(newW, newH), newPos);
   }
 
   MouseCursor _getCursor(HandlePosition pos) {
@@ -154,4 +349,13 @@ class SelectionHandles extends StatelessWidget {
   }
 }
 
-enum HandlePosition { topLeft, topCenter, topRight, middleLeft, middleRight, bottomLeft, bottomCenter, bottomRight }
+enum HandlePosition {
+  topLeft,
+  topCenter,
+  topRight,
+  middleLeft,
+  middleRight,
+  bottomLeft,
+  bottomCenter,
+  bottomRight,
+}

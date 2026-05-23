@@ -144,6 +144,21 @@ class PresentationSettings extends Equatable {
     this.useTimings = false,
     this.showMediaControls = true,
   });
+
+  PresentationSettings copyWith({
+    Size? slideSize,
+    bool? loopUntilEsc,
+    bool? showPresenterView,
+    bool? useTimings,
+    bool? showMediaControls,
+  }) => PresentationSettings(
+    slideSize: slideSize ?? this.slideSize,
+    loopUntilEsc: loopUntilEsc ?? this.loopUntilEsc,
+    showPresenterView: showPresenterView ?? this.showPresenterView,
+    useTimings: useTimings ?? this.useTimings,
+    showMediaControls: showMediaControls ?? this.showMediaControls,
+  );
+
   @override
-  List<Object?> get props => [slideSize, loopUntilEsc, showPresenterView];
+  List<Object?> get props => [slideSize, loopUntilEsc, showPresenterView, useTimings, showMediaControls];
 }

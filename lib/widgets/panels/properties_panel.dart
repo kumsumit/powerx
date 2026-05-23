@@ -444,6 +444,7 @@ class _AnimationProperties extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cubit = context.read<EditorCubit>();
     final state = context.watch<EditorCubit>().state;
     final slide = state.activeSlide;
     final animations = slide.animations.animations
@@ -465,7 +466,7 @@ class _AnimationProperties extends StatelessWidget {
             trailing: IconButton(
               icon: const Icon(Icons.delete, size: 18),
               onPressed: () {
-                // Remove animation logic
+                cubit.removeAnimationFromElement(elementId, anim.id);
               },
             ),
           ),
@@ -473,7 +474,55 @@ class _AnimationProperties extends StatelessWidget {
         const SizedBox(height: 8),
         ElevatedButton.icon(
           onPressed: () {
-            // Add animation dialog
+            showDialog(
+              context: context,
+              builder: (dialogCtx) {
+                AnimationType selectedType = AnimationType.fade;
+                AnimationCategory selectedCategory = AnimationCategory.entrance;
+
+                return StatefulBuilder(
+                  builder: (ctx, setSt) => AlertDialog(
+                    title: const Text('Add Animation'),
+                    content: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        DropdownButtonFormField<AnimationCategory>(
+                          value: selectedCategory,
+                          decoration: const InputDecoration(labelText: 'Category'),
+                          items: AnimationCategory.values.map((c) => DropdownMenuItem(value: c, child: Text(c.name))).toList(),
+                          onChanged: (cat) {
+                            if (cat != null) {
+                              setSt(() => selectedCategory = cat);
+                            }
+                          },
+                        ),
+                        const SizedBox(height: 8),
+                        DropdownButtonFormField<AnimationType>(
+                          value: selectedType,
+                          decoration: const InputDecoration(labelText: 'Effect Type'),
+                          items: AnimationType.values.map((t) => DropdownMenuItem(value: t, child: Text(t.name))).toList(),
+                          onChanged: (type) {
+                            if (type != null) {
+                              setSt(() => selectedType = type);
+                            }
+                          },
+                        ),
+                      ],
+                    ),
+                    actions: [
+                      TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+                      ElevatedButton(
+                        onPressed: () {
+                          cubit.addAnimationToElement(elementId, selectedType, selectedCategory);
+                          Navigator.pop(ctx);
+                        },
+                        child: const Text('Add'),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            );
           },
           icon: const Icon(Icons.add),
           label: const Text('Add Animation'),

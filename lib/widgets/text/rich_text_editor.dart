@@ -36,7 +36,7 @@ class _RichTextEditorState extends State<RichTextEditor> {
   }
 
   void _updateController() {
-    final text = _paragraphs[_currentParagraphIndex].plainText;
+    final text = _paragraphs.map((p) => p.plainText).join('\n');
     _controller.text = text;
     _controller.selection = TextSelection.collapsed(offset: text.length);
   }
@@ -47,9 +47,10 @@ class _RichTextEditorState extends State<RichTextEditor> {
 
   @override
   Widget build(BuildContext context) {
-    final currentRun = _paragraphs[_currentParagraphIndex].runs.isNotEmpty
-        ? _paragraphs[_currentParagraphIndex].runs[_currentRunIndex.clamp(0, _paragraphs[_currentParagraphIndex].runs.length - 1)]
+    final currentRun = _paragraphs.isNotEmpty && _paragraphs.first.runs.isNotEmpty
+        ? _paragraphs.first.runs.first
         : const TextRun();
+    final firstPara = _paragraphs.isNotEmpty ? _paragraphs.first : const RichParagraph();
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -86,28 +87,28 @@ class _RichTextEditorState extends State<RichTextEditor> {
                 const VerticalDivider(width: 1),
                 _FormatButton(
                   icon: Icons.format_align_left,
-                  isActive: _paragraphs[_currentParagraphIndex].style.alignment == TextAlign.left,
+                  isActive: firstPara.style.alignment == TextAlign.left,
                   onTap: () => _setAlignment(TextAlign.left),
                 ),
                 _FormatButton(
                   icon: Icons.format_align_center,
-                  isActive: _paragraphs[_currentParagraphIndex].style.alignment == TextAlign.center,
+                  isActive: firstPara.style.alignment == TextAlign.center,
                   onTap: () => _setAlignment(TextAlign.center),
                 ),
                 _FormatButton(
                   icon: Icons.format_align_right,
-                  isActive: _paragraphs[_currentParagraphIndex].style.alignment == TextAlign.right,
+                  isActive: firstPara.style.alignment == TextAlign.right,
                   onTap: () => _setAlignment(TextAlign.right),
                 ),
                 const VerticalDivider(width: 1),
                 _FormatButton(
                   icon: Icons.format_list_bulleted,
-                  isActive: _paragraphs[_currentParagraphIndex].style.bulletType == BulletType.bullet,
+                  isActive: firstPara.style.bulletType == BulletType.bullet,
                   onTap: () => _setBullet(BulletType.bullet),
                 ),
                 _FormatButton(
                   icon: Icons.format_list_numbered,
-                  isActive: _paragraphs[_currentParagraphIndex].style.bulletType == BulletType.number,
+                  isActive: firstPara.style.bulletType == BulletType.number,
                   onTap: () => _setBullet(BulletType.number),
                 ),
                 const VerticalDivider(width: 1),
@@ -151,10 +152,9 @@ class _RichTextEditorState extends State<RichTextEditor> {
   }
 
   void _toggleFormat({bool? bold, bool? italic, bool? underline, bool? strikethrough}) {
-    final para = _paragraphs[_currentParagraphIndex];
-    if (para.runs.isEmpty) return;
+    if (_paragraphs.isEmpty || _paragraphs.first.runs.isEmpty) return;
 
-    final run = para.runs[_currentRunIndex];
+    final run = _paragraphs.first.runs.first;
     final newRun = run.copyWith(
       bold: bold != null ? !run.bold : null,
       italic: italic != null ? !run.italic : null,
@@ -162,53 +162,65 @@ class _RichTextEditorState extends State<RichTextEditor> {
       strikethrough: strikethrough != null ? !run.strikethrough : null,
     );
 
-    final newRuns = List<TextRun>.from(para.runs);
-    newRuns[_currentRunIndex] = newRun;
-    _paragraphs[_currentParagraphIndex] = para.copyWith(runs: newRuns);
+    _paragraphs = _paragraphs.map((para) {
+      final newRuns = para.runs.map((r) => r.copyWith(
+        bold: newRun.bold,
+        italic: newRun.italic,
+        underline: newRun.underline,
+        strikethrough: newRun.strikethrough,
+      )).toList();
+      return para.copyWith(runs: newRuns);
+    }).toList();
+
     setState(() {});
     _notifyChange();
   }
 
   void _setAlignment(TextAlign align) {
-    final para = _paragraphs[_currentParagraphIndex];
-    _paragraphs[_currentParagraphIndex] = para.copyWith(
-      style: para.style.copyWith(alignment: align),
-    );
+    _paragraphs = _paragraphs.map((para) {
+      return para.copyWith(
+        style: para.style.copyWith(alignment: align),
+      );
+    }).toList();
     setState(() {});
     _notifyChange();
   }
 
   void _setBullet(BulletType type) {
-    final para = _paragraphs[_currentParagraphIndex];
-    _paragraphs[_currentParagraphIndex] = para.copyWith(
-      style: para.style.copyWith(
-        bulletType: para.style.bulletType == type ? BulletType.none : type,
-      ),
-    );
+    _paragraphs = _paragraphs.map((para) {
+      return para.copyWith(
+        style: para.style.copyWith(
+          bulletType: para.style.bulletType == type ? BulletType.none : type,
+        ),
+      );
+    }).toList();
     setState(() {});
     _notifyChange();
   }
 
   void _setFontSize(double? size) {
     if (size == null) return;
-    final para = _paragraphs[_currentParagraphIndex];
-    if (para.runs.isEmpty) return;
-
-    final newRuns = para.runs.map((r) => r.copyWith(fontSize: size)).toList();
-    _paragraphs[_currentParagraphIndex] = para.copyWith(runs: newRuns);
+    _paragraphs = _paragraphs.map((para) {
+      final newRuns = para.runs.map((r) => r.copyWith(fontSize: size)).toList();
+      return para.copyWith(runs: newRuns);
+    }).toList();
     setState(() {});
     _notifyChange();
   }
 
   void _onTextChanged(String text) {
-    final para = _paragraphs[_currentParagraphIndex];
-    if (para.runs.isEmpty) return;
+    final lines = text.split('\n');
+    final baseRun = _paragraphs.isNotEmpty && _paragraphs.first.runs.isNotEmpty
+        ? _paragraphs.first.runs.first
+        : const TextRun();
+    final baseStyle = _paragraphs.isNotEmpty ? _paragraphs.first.style : const ParagraphStyle();
 
-    final run = para.runs[_currentRunIndex];
-    final newRun = run.copyWith(text: text);
-    final newRuns = List<TextRun>.from(para.runs);
-    newRuns[_currentRunIndex] = newRun;
-    _paragraphs[_currentParagraphIndex] = para.copyWith(runs: newRuns);
+    _paragraphs = lines.map((line) {
+      return RichParagraph(
+        runs: [baseRun.copyWith(text: line)],
+        style: baseStyle,
+      );
+    }).toList();
     _notifyChange();
   }
 

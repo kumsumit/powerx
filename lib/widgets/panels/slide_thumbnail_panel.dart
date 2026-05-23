@@ -119,33 +119,42 @@ class SlideThumbnailPanel extends StatelessWidget {
                               aspectRatio: 16 / 9,
                               child: ClipRRect(
                                 borderRadius: BorderRadius.circular(4),
-                                child: Container(
-                                  color: slide.backgroundColorOverride ?? Colors.white,
-                                  child: Stack(
-                                    children: [
-                                      ...slide.elements.map((e) {
-                                        return Positioned(
-                                          left: e.position.dx / 6,
-                                          top: e.position.dy / 6,
-                                          width: e.size.width / 6,
-                                          height: e.size.height / 6,
-                                          child: _buildMiniElement(e),
+                                  child: Container(
+                                    color: slide.backgroundColorOverride ?? Colors.white,
+                                    child: LayoutBuilder(
+                                      builder: (context, constraints) {
+                                        final slideSize = state.presentation.settings.slideSize;
+                                        final scaleX = constraints.maxWidth / slideSize.width;
+                                        final scaleY = constraints.maxHeight / slideSize.height;
+                                        final avgScale = (scaleX + scaleY) / 2;
+
+                                        return Stack(
+                                          children: [
+                                            ...slide.elements.map((e) {
+                                              return Positioned(
+                                                left: e.position.dx * scaleX,
+                                                top: e.position.dy * scaleY,
+                                                width: e.size.width * scaleX,
+                                                height: e.size.height * scaleY,
+                                                child: _buildMiniElement(e, avgScale),
+                                              );
+                                            }),
+                                            if (slide.hidden)
+                                              Container(
+                                                color: Colors.black.withOpacity(0.3),
+                                                child: const Center(
+                                                  child: Icon(
+                                                    Icons.visibility_off,
+                                                    color: Colors.white,
+                                                    size: 16,
+                                                  ),
+                                                ),
+                                              ),
+                                          ],
                                         );
-                                      }),
-                                      if (slide.hidden)
-                                        Container(
-                                          color: Colors.black.withOpacity(0.3),
-                                          child: const Center(
-                                            child: Icon(
-                                              Icons.visibility_off,
-                                              color: Colors.white,
-                                              size: 16,
-                                            ),
-                                          ),
-                                        ),
-                                    ],
+                                      },
+                                    ),
                                   ),
-                                ),
                               ),
                             ),
                           ),
@@ -162,7 +171,7 @@ class SlideThumbnailPanel extends StatelessWidget {
     );
   }
 
-  Widget _buildMiniElement(SlideElement e) {
+  Widget _buildMiniElement(SlideElement e, double scale) {
     if (e is TextElement) {
       return Container(
         color: e.fillColor,
@@ -170,8 +179,8 @@ class SlideThumbnailPanel extends StatelessWidget {
           e.paragraphs.isNotEmpty ? e.paragraphs.first.plainText : '',
           style: TextStyle(
             fontSize:
-                (e.paragraphs.firstOrNull?.runs.firstOrNull?.fontSize ?? 18) /
-                6,
+                ((e.paragraphs.firstOrNull?.runs.firstOrNull?.fontSize ?? 18) *
+                 scale).clamp(2.0, 100.0),
           ),
           overflow: TextOverflow.ellipsis,
           maxLines: 2,
@@ -182,10 +191,10 @@ class SlideThumbnailPanel extends StatelessWidget {
         decoration: BoxDecoration(
           color: e.fillColor,
           border: e.strokeWidth > 0
-              ? Border.all(color: e.strokeColor, width: 0.5)
+              ? Border.all(color: e.strokeColor, width: (e.strokeWidth * scale).clamp(0.1, 10.0))
               : null,
           borderRadius: e.shapeType == ShapeType.circle
-              ? BorderRadius.circular(e.size.width / 12)
+              ? BorderRadius.circular(e.size.width * scale / 2)
               : null,
         ),
       );
@@ -199,7 +208,8 @@ class SlideThumbnailPanel extends StatelessWidget {
         painter: _MiniInkPainter(
           points: e.points,
           color: e.color,
-          thickness: e.thickness / 6,
+          thickness: e.thickness * scale,
+          scale: scale,
         ),
       );
     }
@@ -248,11 +258,13 @@ class _MiniInkPainter extends CustomPainter {
   final List<Offset> points;
   final Color color;
   final double thickness;
+  final double scale;
 
   _MiniInkPainter({
     required this.points,
     required this.color,
     required this.thickness,
+    required this.scale,
   });
 
   @override
@@ -264,7 +276,7 @@ class _MiniInkPainter extends CustomPainter {
       ..strokeCap = StrokeCap.round
       ..style = PaintingStyle.stroke;
     for (int i = 1; i < points.length; i++) {
-      canvas.drawLine(points[i - 1] / 6, points[i] / 6, paint);
+      canvas.drawLine(points[i - 1] * scale, points[i] * scale, paint);
     }
   }
 

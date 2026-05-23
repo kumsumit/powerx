@@ -15,7 +15,7 @@ import '../animations/animation_engine.dart';
 import '../ink/ink_canvas.dart';
 
 class PresentationView extends StatefulWidget {
-  final List<Slide> slides;
+  final Presentation presentation;
   final int initialIndex;
   final VoidCallback onExit;
   final VoidCallback onNext;
@@ -23,7 +23,7 @@ class PresentationView extends StatefulWidget {
 
   const PresentationView({
     super.key,
-    required this.slides,
+    required this.presentation,
     required this.initialIndex,
     required this.onExit,
     required this.onNext,
@@ -68,7 +68,7 @@ class _PresentationViewState extends State<PresentationView>
     currentIndex = widget.initialIndex;
 
     _transitionController = AnimationController(
-      duration: widget.slides[currentIndex].transition.duration,
+      duration: widget.presentation.slides[currentIndex].transition.duration,
       vsync: this,
     );
     _transitionAnimation = Tween<double>(begin: 0, end: 1).animate(
@@ -121,7 +121,7 @@ class _PresentationViewState extends State<PresentationView>
   }
 
   void _next() {
-    final slide = widget.slides[currentIndex];
+    final slide = widget.presentation.slides[currentIndex];
     final totalAnims = slide.animations.animations.length;
 
     if (_playedAnimationsCount < totalAnims) {
@@ -130,7 +130,7 @@ class _PresentationViewState extends State<PresentationView>
       });
       _elementAnimController.forward(from: 0.0);
     } else {
-      if (currentIndex < widget.slides.length - 1) {
+      if (currentIndex < widget.presentation.slides.length - 1) {
         _transitionController.reverse().then((_) {
           if (mounted) {
             setState(() {
@@ -140,7 +140,7 @@ class _PresentationViewState extends State<PresentationView>
               widget.onNext();
             });
             _transitionController.duration =
-                widget.slides[currentIndex].transition.duration;
+                widget.presentation.slides[currentIndex].transition.duration;
             _transitionController.forward(from: 0.0);
           }
         });
@@ -162,12 +162,12 @@ class _PresentationViewState extends State<PresentationView>
               currentIndex--;
               // Start on the last animation of the previous slide
               _playedAnimationsCount =
-                  widget.slides[currentIndex].animations.animations.length;
+                  widget.presentation.slides[currentIndex].animations.animations.length;
               _inkStrokes.clear();
               widget.onPrevious();
             });
             _transitionController.duration =
-                widget.slides[currentIndex].transition.duration;
+                widget.presentation.slides[currentIndex].transition.duration;
             _transitionController.forward(from: 0.0);
           }
         });
@@ -176,7 +176,7 @@ class _PresentationViewState extends State<PresentationView>
   }
 
   void _jumpToSlide(int index) {
-    if (index >= 0 && index < widget.slides.length) {
+    if (index >= 0 && index < widget.presentation.slides.length) {
       _transitionController.reverse().then((_) {
         if (mounted) {
           setState(() {
@@ -186,7 +186,7 @@ class _PresentationViewState extends State<PresentationView>
             _showSlidePicker = false;
           });
           _transitionController.duration =
-              widget.slides[currentIndex].transition.duration;
+              widget.presentation.slides[currentIndex].transition.duration;
           _transitionController.forward(from: 0.0);
         }
       });
@@ -195,9 +195,9 @@ class _PresentationViewState extends State<PresentationView>
 
   @override
   Widget build(BuildContext context) {
-    final slide = widget.slides[currentIndex];
-    // A standard presentation aspect ratio 16:9
-    const slideAspectRatio = 16.0 / 9.0;
+    final slide = widget.presentation.slides[currentIndex];
+    final slideSize = widget.presentation.settings.slideSize;
+    final slideAspectRatio = slideSize.width / slideSize.height;
 
     return RawKeyboardListener(
       focusNode: FocusNode()..requestFocus(),
@@ -245,8 +245,8 @@ class _PresentationViewState extends State<PresentationView>
                         child: FittedBox(
                           fit: BoxFit.contain,
                           child: Container(
-                            width: 960, // base design width
-                            height: 540, // base design height (16:9)
+                            width: slideSize.width,
+                            height: slideSize.height,
                             color: slide.backgroundColorOverride ?? Colors.white,
                             child: Stack(
                               children: [
@@ -336,7 +336,7 @@ class _PresentationViewState extends State<PresentationView>
             onPressed: _prev,
           ),
           Text(
-            '${currentIndex + 1} / ${widget.slides.length}',
+            '${currentIndex + 1} / ${widget.presentation.slides.length}',
             style: const TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600),
           ),
           IconButton(
@@ -471,14 +471,20 @@ class _PresentationViewState extends State<PresentationView>
     );
   }
 
-  // Slide picker horizontal grid at the bottom
+  // Slide drawer picker horizontal grid at the bottom
   Widget _buildSlidePicker(BuildContext context) {
+    final slideSize = widget.presentation.settings.slideSize;
+    final double thumbnailWidth = 120.0;
+    final double thumbnailHeight = thumbnailWidth * slideSize.height / slideSize.width;
+    final double scaleX = thumbnailWidth / slideSize.width;
+    final double scaleY = thumbnailHeight / slideSize.height;
+
     return Positioned(
       bottom: _showControls ? 80 : 20,
       left: 20,
       right: 20,
       child: Container(
-        height: 120,
+        height: 130,
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: Colors.black.withOpacity(0.9),
@@ -496,14 +502,14 @@ class _PresentationViewState extends State<PresentationView>
             Expanded(
               child: ListView.builder(
                 scrollDirection: Axis.horizontal,
-                itemCount: widget.slides.length,
+                itemCount: widget.presentation.slides.length,
                 itemBuilder: (context, index) {
-                  final slide = widget.slides[index];
+                  final slide = widget.presentation.slides[index];
                   final isCurrent = index == currentIndex;
                   return GestureDetector(
                     onTap: () => _jumpToSlide(index),
                     child: Container(
-                      width: 120,
+                      width: thumbnailWidth,
                       margin: const EdgeInsets.only(right: 12),
                       decoration: BoxDecoration(
                         border: Border.all(
@@ -521,10 +527,10 @@ class _PresentationViewState extends State<PresentationView>
                                 children: slide.elements.map((e) {
                                   // Draw tiny elements for picker
                                   return Positioned(
-                                    left: e.position.dx * (120 / 960),
-                                    top: e.position.dy * (67.5 / 540),
-                                    width: e.size.width * (120 / 960),
-                                    height: e.size.height * (67.5 / 540),
+                                    left: e.position.dx * scaleX,
+                                    top: e.position.dy * scaleY,
+                                    width: e.size.width * scaleX,
+                                    height: e.size.height * scaleY,
                                     child: Container(
                                       color: e is TextElement
                                           ? (e.fillColor ?? Colors.grey.withOpacity(0.2))

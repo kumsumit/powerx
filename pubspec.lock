@@ -226,7 +226,7 @@ packages:
     description:
       path: "."
       ref: HEAD
-      resolved-ref: "26af7545e9255bcdb98803ee26f5c2cd81654f6a"
+      resolved-ref: "4a47811d6708b5d295abdec60db76f1cf805247a"
       url: "https://github.com/sumitsharansatsangi/flutter_color_picker_plus.git"
     source: git
     version: "2.4.0"

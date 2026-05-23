@@ -46,7 +46,7 @@ class EditorShell extends StatelessWidget {
             );
           }
           return PresentationView(
-            slides: state.presentation.slides,
+            presentation: state.presentation,
             initialIndex: state.presentation.activeSlideIndex,
             onExit: () => context.read<EditorCubit>().exitPresentation(),
             onNext: () => context.read<EditorCubit>().nextSlide(),
@@ -76,6 +76,7 @@ class EditorShell extends StatelessWidget {
               cubit.pasteElement();
             },
             EditorShortcutActivators.delete: cubit.deleteSelected,
+            EditorShortcutActivators.backspace: cubit.deleteSelected,
             EditorShortcutActivators.escape: () => cubit.selectElement(null),
             EditorShortcutActivators.f5: cubit.startPresentation,
             EditorShortcutActivators.shiftF5: () => cubit.startPresentation(presenterView: true),
@@ -135,19 +136,24 @@ class StatusBar extends StatelessWidget {
           ),
           const VerticalDivider(),
           SizedBox(
-            width: 80,
+            width: 90,
             child: DropdownButtonHideUnderline(
               child: DropdownButton<double>(
                 value: state.canvasZoom,
                 isDense: true,
-                items: [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0].map((
-                  z,
-                ) {
-                  return DropdownMenuItem(
-                    value: z,
-                    child: Text('${(z * 100).toInt()}%'),
-                  );
-                }).toList(),
+                items: (() {
+                  final list = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0];
+                  if (!list.contains(state.canvasZoom)) {
+                    list.add(state.canvasZoom);
+                    list.sort();
+                  }
+                  return list.map((z) {
+                    return DropdownMenuItem(
+                      value: z,
+                      child: Text('${(z * 100).toInt()}%'),
+                    );
+                  }).toList();
+                })(),
                 onChanged: (v) => v != null ? cubit.setZoom(v) : null,
               ),
             ),

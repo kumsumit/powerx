@@ -349,7 +349,8 @@ class _DesignToolbar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cubit = context.read<EditorCubit>();
-    final slide = context.watch<EditorCubit>().state.activeSlide;
+    final state = context.watch<EditorCubit>().state;
+    final slide = state.activeSlide;
 
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
@@ -390,8 +391,18 @@ class _DesignToolbar extends StatelessWidget {
           ]),
           const _VDiv(),
           _ToolGroup(label: 'Slide Size', children: [
-            _ToolButton(icon: Icons.crop_16_9, label: 'Widescreen', onTap: () {}),
-            _ToolButton(icon: Icons.crop_square, label: 'Standard', onTap: () {}),
+            _ToolButton(
+              icon: Icons.crop_16_9,
+              label: 'Widescreen',
+              isActive: state.presentation.settings.slideSize == const Size(960, 540),
+              onTap: () => cubit.updateSlideSize(const Size(960, 540)),
+            ),
+            _ToolButton(
+              icon: Icons.crop_square,
+              label: 'Standard',
+              isActive: state.presentation.settings.slideSize == const Size(720, 540),
+              onTap: () => cubit.updateSlideSize(const Size(720, 540)),
+            ),
           ]),
           const _VDiv(),
           _ToolGroup(label: 'Theme Colors', children: [

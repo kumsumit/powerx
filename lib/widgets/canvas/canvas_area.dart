@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:math';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:uuid/uuid.dart';
@@ -17,9 +18,24 @@ import '../ink/ink_canvas.dart';
 
 const _uuid = Uuid();
 
-class CanvasArea extends StatelessWidget {
+class CanvasArea extends StatefulWidget {
   final double zoom;
   const CanvasArea({super.key, required this.zoom});
+
+  @override
+  State<CanvasArea> createState() => _CanvasAreaState();
+}
+
+class _CanvasAreaState extends State<CanvasArea> {
+  final ScrollController _horizontalController = ScrollController();
+  final ScrollController _verticalController = ScrollController();
+
+  @override
+  void dispose() {
+    _horizontalController.dispose();
+    _verticalController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -27,65 +43,126 @@ class CanvasArea extends StatelessWidget {
     final state = context.watch<EditorCubit>().state;
     final slide = state.activeSlide;
     final settings = state.presentation.settings;
+    final slideSize = settings.slideSize;
+    final scaledSlideSize = slideSize * widget.zoom;
+    const workspacePadding = 48.0;
 
     return Container(
       color: const Color(0xFF808080),
-      child: InteractiveViewer(
-        boundaryMargin: const EdgeInsets.all(200),
-        minScale: 0.1,
-        maxScale: 5.0,
-        scaleFactor: 800,
-        child: Center(
-          child: GestureDetector(
-            onTapDown: (details) {
-              _handleCanvasTap(context, details.localPosition, state.activeTool);
-            },
-            child: Container(
-              width: settings.slideSize.width,
-              height: settings.slideSize.height,
-              color: slide.backgroundColorOverride ?? const Color(0xFFFFFFFF),
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  ...slide.elements.map(
-                    (e) => _ElementRenderer(
-                      key: ValueKey(e.id),
-                      element: e,
-                      isSelected: state.selectedElementId == e.id,
-                      isMultiSelected: state.multiSelectedIds.contains(e.id),
-                    ),
-                  ),
-                  if (state.activeTool == Tool.pen)
-                    Positioned.fill(
-                      child: InkCanvas(
-                        strokes: const [],
-                        canvasSize: settings.slideSize,
-                        onStrokeComplete: (stroke) {
-                          final bounds = stroke.bounds;
-                          if (bounds.width < 2 && bounds.height < 2) return;
-                          final localPoints = stroke.points
-                              .map((p) => Offset(p.x - bounds.left, p.y - bounds.top))
-                              .toList();
-                          final inkEl = InkElement(
-                            id: stroke.id,
-                            position: bounds.topLeft,
-                            size: bounds.size,
-                            zIndex: slide.elements.length,
-                            points: localPoints,
-                            color: stroke.color,
-                            thickness: stroke.thickness,
-                            isHighlighter: stroke.isHighlighter,
-                          );
-                          cubit.addElement(inkEl);
-                          cubit.setTool(Tool.select);
-                        },
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final contentWidth = scaledSlideSize.width + workspacePadding * 2;
+          final contentHeight = scaledSlideSize.height + workspacePadding * 2;
+
+          // Disable drag-to-scroll so dragging an element/resize handle is not
+          // stolen by the scroll views' (smaller-slop) drag recognizers. The
+          // mouse wheel, trackpad, and scrollbar thumbs still scroll the canvas.
+          final scrollBehavior = ScrollConfiguration.of(
+            context,
+          ).copyWith(dragDevices: const <PointerDeviceKind>{});
+
+          return ScrollConfiguration(
+            behavior: scrollBehavior,
+            child: Scrollbar(
+              controller: _verticalController,
+              thumbVisibility: true,
+              child: Scrollbar(
+                controller: _horizontalController,
+                thumbVisibility: true,
+                notificationPredicate: (notification) =>
+                    notification.metrics.axis == Axis.horizontal,
+                child: SingleChildScrollView(
+                  controller: _verticalController,
+                  child: SingleChildScrollView(
+                    controller: _horizontalController,
+                    scrollDirection: Axis.horizontal,
+                    child: SizedBox(
+                      width: max(constraints.maxWidth, contentWidth),
+                      height: max(constraints.maxHeight, contentHeight),
+                      child: Center(
+                        child: SizedBox(
+                          width: scaledSlideSize.width,
+                          height: scaledSlideSize.height,
+                          child: Transform.scale(
+                            scale: widget.zoom,
+                            alignment: Alignment.topLeft,
+                            child: GestureDetector(
+                              onTapDown: (details) {
+                                _handleCanvasTap(
+                                  context,
+                                  details.localPosition,
+                                  state.activeTool,
+                                );
+                              },
+                              child: Container(
+                                width: slideSize.width,
+                                height: slideSize.height,
+                                color:
+                                    slide.backgroundColorOverride ??
+                                    const Color(0xFFFFFFFF),
+                                child: Stack(
+                                  clipBehavior: Clip.none,
+                                  children: [
+                                    ...slide.elements.map(
+                                      (e) => _ElementRenderer(
+                                        key: ValueKey(e.id),
+                                        element: e,
+                                        zoom: widget.zoom,
+                                        isSelected:
+                                            state.selectedElementId == e.id,
+                                        isMultiSelected: state.multiSelectedIds
+                                            .contains(e.id),
+                                      ),
+                                    ),
+                                    if (state.activeTool == Tool.pen)
+                                      Positioned.fill(
+                                        child: InkCanvas(
+                                          strokes: const [],
+                                          canvasSize: slideSize,
+                                          onStrokeComplete: (stroke) {
+                                            final bounds = stroke.bounds;
+                                            if (bounds.width < 2 &&
+                                                bounds.height < 2) {
+                                              return;
+                                            }
+                                            final localPoints = stroke.points
+                                                .map(
+                                                  (p) => Offset(
+                                                    p.x - bounds.left,
+                                                    p.y - bounds.top,
+                                                  ),
+                                                )
+                                                .toList();
+                                            final inkEl = InkElement(
+                                              id: stroke.id,
+                                              position: bounds.topLeft,
+                                              size: bounds.size,
+                                              zIndex: slide.elements.length,
+                                              points: localPoints,
+                                              color: stroke.color,
+                                              thickness: stroke.thickness,
+                                              isHighlighter:
+                                                  stroke.isHighlighter,
+                                            );
+                                            cubit.addElement(inkEl);
+                                            cubit.setTool(Tool.select);
+                                          },
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
                       ),
                     ),
-                ],
+                  ),
+                ),
               ),
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }
@@ -202,12 +279,14 @@ class CanvasArea extends StatelessWidget {
 
 class _ElementRenderer extends StatefulWidget {
   final SlideElement element;
+  final double zoom;
   final bool isSelected;
   final bool isMultiSelected;
 
   const _ElementRenderer({
     super.key,
     required this.element,
+    required this.zoom,
     required this.isSelected,
     required this.isMultiSelected,
   });
@@ -261,14 +340,30 @@ class _ElementRendererState extends State<_ElementRenderer> {
       child: GestureDetector(
         behavior: HitTestBehavior.translucent,
         onTap: () {
-          if (widget.isSelected && element is TextElement && !_isEditing) {
-            setState(() => _isEditing = true);
-          } else if (!widget.isSelected) {
+          if (!widget.isSelected) {
             cubit.selectElement(element.id);
           }
         },
-        onPanUpdate: widget.isSelected && !element.isLocked && !_isEditing
-            ? (details) => cubit.moveElement(element.id, details.delta)
+        onDoubleTap: () {
+          if (element is TextElement && !_isEditing) {
+            if (!widget.isSelected) {
+              cubit.selectElement(element.id);
+            }
+            setState(() => _isEditing = true);
+          }
+        },
+        onPanStart: !element.isLocked && !_isEditing
+            ? (_) {
+                if (!widget.isSelected) {
+                  cubit.selectElement(element.id);
+                }
+              }
+            : null,
+        onPanUpdate: !element.isLocked && !_isEditing
+            ? (details) {
+                // delta is already in unscaled slide coords (inside Transform.scale).
+                cubit.moveElement(element.id, details.delta);
+              }
             : null,
         child: Transform.rotate(
           angle: element.rotation * pi / 180,
@@ -281,10 +376,15 @@ class _ElementRendererState extends State<_ElementRenderer> {
                 Positioned.fill(
                   child: SelectionHandles(
                     element: element,
+                    zoom: widget.zoom,
                     onResize: (newSize, newPos) => cubit.resizeElement(
                       element.id,
                       newSize,
                       newPosition: newPos,
+                    ),
+                    onRotate: (newRotation) => cubit.rotateElement(
+                      element.id,
+                      newRotation,
                     ),
                   ),
                 ),
@@ -340,10 +440,8 @@ class _ElementRendererState extends State<_ElementRenderer> {
                     fontFamily: run.fontFamily,
                     fontSize: run.fontSize,
                     color: run.color,
-                    fontWeight:
-                        run.bold ? FontWeight.bold : FontWeight.normal,
-                    fontStyle:
-                        run.italic ? FontStyle.italic : FontStyle.normal,
+                    fontWeight: run.bold ? FontWeight.bold : FontWeight.normal,
+                    fontStyle: run.italic ? FontStyle.italic : FontStyle.normal,
                     decoration: run.underline
                         ? TextDecoration.underline
                         : run.strikethrough
@@ -402,13 +500,20 @@ class _ChartPlaceholder extends StatelessWidget {
 
   AdvancedChartType _mapType(ChartType t) {
     switch (t) {
-      case ChartType.bar: return AdvancedChartType.barClustered;
-      case ChartType.line: return AdvancedChartType.line;
-      case ChartType.pie: return AdvancedChartType.pie;
-      case ChartType.area: return AdvancedChartType.area;
-      case ChartType.scatter: return AdvancedChartType.scatter;
-      case ChartType.radar: return AdvancedChartType.radar;
-      default: return AdvancedChartType.columnClustered;
+      case ChartType.bar:
+        return AdvancedChartType.barClustered;
+      case ChartType.line:
+        return AdvancedChartType.line;
+      case ChartType.pie:
+        return AdvancedChartType.pie;
+      case ChartType.area:
+        return AdvancedChartType.area;
+      case ChartType.scatter:
+        return AdvancedChartType.scatter;
+      case ChartType.radar:
+        return AdvancedChartType.radar;
+      default:
+        return AdvancedChartType.columnClustered;
     }
   }
 
@@ -428,7 +533,9 @@ class _ChartPlaceholder extends StatelessWidget {
     if (dataTable.data.isEmpty || dataTable.columnHeaders.isEmpty) {
       return Container(
         color: element.style.backgroundColor,
-        child: const Center(child: Icon(Icons.bar_chart, color: Colors.grey, size: 48)),
+        child: const Center(
+          child: Icon(Icons.bar_chart, color: Colors.grey, size: 48),
+        ),
       );
     }
     return Container(
@@ -460,6 +567,7 @@ class _GroupElementRenderer extends StatelessWidget {
           height: child.size.height,
           child: _ElementRenderer(
             element: child,
+            zoom: 1,
             isSelected: false,
             isMultiSelected: false,
           ),

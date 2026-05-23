@@ -101,8 +101,8 @@ class _PresenterViewState extends State<PresenterView> {
                         child: FittedBox(
                           fit: BoxFit.contain,
                           child: Container(
-                            width: 960,
-                            height: 540,
+                            width: widget.presentation.settings.slideSize.width,
+                            height: widget.presentation.settings.slideSize.height,
                             color: slide.backgroundColorOverride ?? Colors.white,
                             child: Stack(
                               children: slide.elements
@@ -204,8 +204,8 @@ class _PresenterViewState extends State<PresenterView> {
                       child: FittedBox(
                         fit: BoxFit.contain,
                         child: Container(
-                          width: 960,
-                          height: 540,
+                          width: widget.presentation.settings.slideSize.width,
+                          height: widget.presentation.settings.slideSize.height,
                           color:
                               nextSlide.backgroundColorOverride ?? Colors.white,
                           child: Stack(

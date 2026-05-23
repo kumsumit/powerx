@@ -46,6 +46,7 @@ class EditorShortcutActivators {
   static const ctrlY = SingleActivator(LogicalKeyboardKey.keyY, control: true);
   static const ctrlShiftZ = SingleActivator(LogicalKeyboardKey.keyZ, control: true, shift: true);
   static const delete = SingleActivator(LogicalKeyboardKey.delete);
+  static const backspace = SingleActivator(LogicalKeyboardKey.backspace);
   static const ctrlD = SingleActivator(LogicalKeyboardKey.keyD, control: true);
   static const ctrlG = SingleActivator(LogicalKeyboardKey.keyG, control: true);
   static const ctrlShiftG = SingleActivator(LogicalKeyboardKey.keyG, control: true, shift: true);
