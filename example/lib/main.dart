@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
-import 'cubit/editor_cubit.dart';
-import 'widgets/editor_shell.dart';
+import 'package:powerx/powerx.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -10,26 +8,23 @@ void main() {
     DeviceOrientation.landscapeLeft,
     DeviceOrientation.landscapeRight,
   ]);
-  runApp(const PowerPointApp());
+  runApp(const PowerXExampleApp());
 }
 
-class PowerPointApp extends StatelessWidget {
-  const PowerPointApp({super.key});
+class PowerXExampleApp extends StatelessWidget {
+  const PowerXExampleApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Flutter PowerPoint Pro',
+      title: 'PowerX Example',
       theme: ThemeData(
         useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFFB7472A)),
         fontFamily: 'Calibri',
       ),
-      home: BlocProvider(
-        create: (_) => EditorCubit(),
-        child: const EditorShell(),
-      ),
+      home: const PowerXEditor(),
     );
   }
 }

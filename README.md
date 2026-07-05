@@ -1,17 +1,43 @@
-# powerx
+# PowerX
 
-A new Flutter project.
+PowerX is a reusable Flutter library for embedding a PowerPoint-style
+presentation editor in another Flutter app.
 
-## Getting Started
+## Usage
 
-This project is a starting point for a Flutter application.
+Add PowerX as a dependency:
 
-A few resources to get you started if this is your first Flutter project:
+```yaml
+dependencies:
+  powerx:
+    path: ../powerx
+```
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+Embed the editor:
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+```dart
+import 'package:flutter/material.dart';
+import 'package:powerx/powerx.dart';
+
+void main() {
+  runApp(const MaterialApp(home: PowerXEditor()));
+}
+```
+
+If you want to control the editor state yourself, pass an `EditorCubit`:
+
+```dart
+final editorCubit = EditorCubit();
+
+PowerXEditor(editorCubit: editorCubit);
+```
+
+## Example
+
+Run the bundled example app:
+
+```sh
+cd example
+flutter pub get
+flutter run
+```
