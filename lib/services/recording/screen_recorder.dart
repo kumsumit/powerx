@@ -1,21 +1,16 @@
 import 'dart:async';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 enum RecordingQuality {
-  low,      // 480p
-  medium,   // 720p
-  high,     // 1080p
-  ultra,    // 4K
+  low, // 480p
+  medium, // 720p
+  high, // 1080p
+  ultra, // 4K
 }
 
-enum RecordingFormat {
-  mp4,
-  avi,
-  mov,
-  webm,
-  gif,
-}
+enum RecordingFormat { mp4, avi, mov, webm, gif }
 
 class RecordingSettings {
   final RecordingQuality quality;
@@ -67,6 +62,28 @@ class RecordingSettings {
   }
 }
 
+class RecordingResult {
+  final String name;
+  final RecordingSettings settings;
+  final Duration duration;
+  final int frameCount;
+  final int frameBytes;
+  final Uint8List bytes;
+  final DateTime createdAt;
+
+  const RecordingResult({
+    required this.name,
+    required this.settings,
+    required this.duration,
+    required this.frameCount,
+    required this.frameBytes,
+    required this.bytes,
+    required this.createdAt,
+  });
+
+  double get sizeMB => bytes.length / (1024 * 1024);
+}
+
 class ScreenRecorder extends ChangeNotifier {
   bool _isRecording = false;
   bool _isPaused = false;
@@ -79,6 +96,7 @@ class ScreenRecorder extends ChangeNotifier {
   final List<Uint8List> _frames = [];
   String? _outputPath;
   String? _error;
+  RecordingResult? _lastResult;
 
   bool get isRecording => _isRecording;
   bool get isPaused => _isPaused;
@@ -86,11 +104,10 @@ class ScreenRecorder extends ChangeNotifier {
   RecordingSettings get settings => _settings;
   String? get outputPath => _outputPath;
   String? get error => _error;
+  RecordingResult? get lastResult => _lastResult;
   int get frameCount => _frameCount;
   double get estimatedFileSizeMB {
-    final pixels = settings.resolution.width * settings.resolution.height;
-    final bytesPerFrame = pixels * 4; // RGBA
-    final totalBytes = bytesPerFrame * _frameCount;
+    final totalBytes = _frames.fold<int>(0, (sum, frame) => sum + frame.length);
     return totalBytes / (1024 * 1024);
   }
 
@@ -104,11 +121,6 @@ class ScreenRecorder extends ChangeNotifier {
     if (_isRecording) return;
 
     try {
-      // In real implementation:
-      // 1. Request screen capture permission
-      // 2. Initialize encoder (FFmpeg or platform API)
-      // 3. Start frame capture loop
-
       _isRecording = true;
       _isPaused = false;
       _startTime = DateTime.now();
@@ -116,6 +128,8 @@ class ScreenRecorder extends ChangeNotifier {
       _frameCount = 0;
       _frames.clear();
       _error = null;
+      _outputPath = null;
+      _lastResult = null;
 
       _timer = Timer.periodic(const Duration(seconds: 1), (_) {
         if (!_isPaused) {
@@ -156,13 +170,25 @@ class ScreenRecorder extends ChangeNotifier {
       _isRecording = false;
       _isPaused = false;
 
-      // In real implementation:
-      // 1. Stop frame capture
-      // 2. Finalize encoder
-      // 3. Save file
-      // 4. Clean up resources
-
-      _outputPath = '/recordings/recording_${DateTime.now().millisecondsSinceEpoch}${_settings.fileExtension}';
+      final createdAt = DateTime.now();
+      final name =
+          'recording_${createdAt.millisecondsSinceEpoch}${_settings.fileExtension}';
+      final bytes = _buildRecordingPayload(name, createdAt);
+      final frameBytes = _frames.fold<int>(
+        0,
+        (sum, frame) => sum + frame.length,
+      );
+      _lastResult = RecordingResult(
+        name: name,
+        settings: _settings,
+        duration: _elapsed,
+        frameCount: _frameCount,
+        frameBytes: frameBytes,
+        bytes: bytes,
+        createdAt: createdAt,
+      );
+      _outputPath = 'memory://$name';
+      _frames.clear();
 
       notifyListeners();
     } catch (e) {
@@ -173,8 +199,38 @@ class ScreenRecorder extends ChangeNotifier {
 
   void captureFrame(Uint8List frameData) {
     if (!_isRecording || _isPaused) return;
-    _frames.add(frameData);
+    _frames.add(Uint8List.fromList(frameData));
     _frameCount++;
+  }
+
+  Uint8List _buildRecordingPayload(String name, DateTime createdAt) {
+    final buffer = BytesBuilder(copy: false);
+    buffer.add(
+      Uint8List.fromList(
+        'PowerX Recording\n'
+                'name=$name\n'
+                'createdAt=${createdAt.toIso8601String()}\n'
+                'format=${_settings.format.name}\n'
+                'fps=${_settings.fps}\n'
+                'durationMs=${_elapsed.inMilliseconds}\n'
+                'frames=$_frameCount\n'
+                'resolution=${_settings.resolution.width.toInt()}x${_settings.resolution.height.toInt()}\n\n'
+            .codeUnits,
+      ),
+    );
+    for (final frame in _frames) {
+      buffer.add(_int32Bytes(frame.length));
+      buffer.add(frame);
+    }
+    return buffer.toBytes();
+  }
+
+  Uint8List _int32Bytes(int value) {
+    return Uint8List(4)
+      ..[0] = value & 0xFF
+      ..[1] = (value >> 8) & 0xFF
+      ..[2] = (value >> 16) & 0xFF
+      ..[3] = (value >> 24) & 0xFF;
   }
 
   void discardRecording() {
@@ -185,6 +241,7 @@ class ScreenRecorder extends ChangeNotifier {
     _frameCount = 0;
     _frames.clear();
     _outputPath = null;
+    _lastResult = null;
     notifyListeners();
   }
 
@@ -226,10 +283,7 @@ class RecordingOverlay extends StatelessWidget {
               color: Colors.red[700],
               borderRadius: BorderRadius.circular(8),
               boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.3),
-                  blurRadius: 8,
-                ),
+                BoxShadow(color: Colors.black.withOpacity(0.3), blurRadius: 8),
               ],
             ),
             child: Row(
@@ -315,7 +369,8 @@ class RecordingSettingsDialog extends StatefulWidget {
   });
 
   @override
-  State<RecordingSettingsDialog> createState() => _RecordingSettingsDialogState();
+  State<RecordingSettingsDialog> createState() =>
+      _RecordingSettingsDialogState();
 }
 
 class _RecordingSettingsDialogState extends State<RecordingSettingsDialog> {
@@ -337,7 +392,10 @@ class _RecordingSettingsDialogState extends State<RecordingSettingsDialog> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Quality
-            const Text('Quality', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text(
+              'Quality',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
             DropdownButton<RecordingQuality>(
               value: _settings.quality,
               isExpanded: true,
@@ -349,13 +407,15 @@ class _RecordingSettingsDialogState extends State<RecordingSettingsDialog> {
               }).toList(),
               onChanged: (q) {
                 if (q != null) {
-                  setState(() => _settings = RecordingSettings(
-                    quality: q,
-                    format: _settings.format,
-                    fps: _settings.fps,
-                    recordAudio: _settings.recordAudio,
-                    recordPointer: _settings.recordPointer,
-                  ));
+                  setState(
+                    () => _settings = RecordingSettings(
+                      quality: q,
+                      format: _settings.format,
+                      fps: _settings.fps,
+                      recordAudio: _settings.recordAudio,
+                      recordPointer: _settings.recordPointer,
+                    ),
+                  );
                 }
               },
             ),
@@ -373,19 +433,24 @@ class _RecordingSettingsDialogState extends State<RecordingSettingsDialog> {
               }).toList(),
               onChanged: (f) {
                 if (f != null) {
-                  setState(() => _settings = RecordingSettings(
-                    quality: _settings.quality,
-                    format: f,
-                    fps: _settings.fps,
-                    recordAudio: _settings.recordAudio,
-                    recordPointer: _settings.recordPointer,
-                  ));
+                  setState(
+                    () => _settings = RecordingSettings(
+                      quality: _settings.quality,
+                      format: f,
+                      fps: _settings.fps,
+                      recordAudio: _settings.recordAudio,
+                      recordPointer: _settings.recordPointer,
+                    ),
+                  );
                 }
               },
             ),
             const SizedBox(height: 16),
             // FPS
-            const Text('Frame Rate', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text(
+              'Frame Rate',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
             Slider(
               value: _settings.fps.toDouble(),
               min: 15,
@@ -393,13 +458,15 @@ class _RecordingSettingsDialogState extends State<RecordingSettingsDialog> {
               divisions: 9,
               label: '${_settings.fps} FPS',
               onChanged: (v) {
-                setState(() => _settings = RecordingSettings(
-                  quality: _settings.quality,
-                  format: _settings.format,
-                  fps: v.toInt(),
-                  recordAudio: _settings.recordAudio,
-                  recordPointer: _settings.recordPointer,
-                ));
+                setState(
+                  () => _settings = RecordingSettings(
+                    quality: _settings.quality,
+                    format: _settings.format,
+                    fps: v.toInt(),
+                    recordAudio: _settings.recordAudio,
+                    recordPointer: _settings.recordPointer,
+                  ),
+                );
               },
             ),
             const SizedBox(height: 16),
@@ -408,26 +475,30 @@ class _RecordingSettingsDialogState extends State<RecordingSettingsDialog> {
               title: const Text('Record Audio'),
               value: _settings.recordAudio,
               onChanged: (v) {
-                setState(() => _settings = RecordingSettings(
-                  quality: _settings.quality,
-                  format: _settings.format,
-                  fps: _settings.fps,
-                  recordAudio: v ?? true,
-                  recordPointer: _settings.recordPointer,
-                ));
+                setState(
+                  () => _settings = RecordingSettings(
+                    quality: _settings.quality,
+                    format: _settings.format,
+                    fps: _settings.fps,
+                    recordAudio: v ?? true,
+                    recordPointer: _settings.recordPointer,
+                  ),
+                );
               },
             ),
             CheckboxListTile(
               title: const Text('Record Pointer'),
               value: _settings.recordPointer,
               onChanged: (v) {
-                setState(() => _settings = RecordingSettings(
-                  quality: _settings.quality,
-                  format: _settings.format,
-                  fps: _settings.fps,
-                  recordAudio: _settings.recordAudio,
-                  recordPointer: v ?? true,
-                ));
+                setState(
+                  () => _settings = RecordingSettings(
+                    quality: _settings.quality,
+                    format: _settings.format,
+                    fps: _settings.fps,
+                    recordAudio: _settings.recordAudio,
+                    recordPointer: v ?? true,
+                  ),
+                );
               },
             ),
           ],

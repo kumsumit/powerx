@@ -34,6 +34,7 @@ class _RichTextEditorState extends State<RichTextEditor> {
       ];
     }
     _updateController();
+    _controller.addListener(_updateSelectionIndexes);
     _focusNode.requestFocus();
   }
 
@@ -47,15 +48,45 @@ class _RichTextEditorState extends State<RichTextEditor> {
     widget.onChanged(_paragraphs);
   }
 
+  void _updateSelectionIndexes() {
+    final offset = _controller.selection.baseOffset;
+    if (offset < 0) return;
+
+    var cursor = 0;
+    for (int i = 0; i < _paragraphs.length; i++) {
+      final length = _paragraphs[i].plainText.length;
+      if (offset <= cursor + length || i == _paragraphs.length - 1) {
+        if (_currentParagraphIndex != i || _currentRunIndex != 0) {
+          setState(() {
+            _currentParagraphIndex = i;
+            _currentRunIndex = 0;
+          });
+        }
+        return;
+      }
+      cursor += length + 1;
+    }
+  }
+
+  RichParagraph get _currentParagraph {
+    if (_paragraphs.isEmpty) return const RichParagraph();
+    final index = _currentParagraphIndex
+        .clamp(0, _paragraphs.length - 1)
+        .toInt();
+    return _paragraphs[index];
+  }
+
+  TextRun get _currentRun {
+    final runs = _currentParagraph.runs;
+    if (runs.isEmpty) return const TextRun();
+    final index = _currentRunIndex.clamp(0, runs.length - 1).toInt();
+    return runs[index];
+  }
+
   @override
   Widget build(BuildContext context) {
-    final currentRun =
-        _paragraphs.isNotEmpty && _paragraphs.first.runs.isNotEmpty
-        ? _paragraphs.first.runs.first
-        : const TextRun();
-    final firstPara = _paragraphs.isNotEmpty
-        ? _paragraphs.first
-        : const RichParagraph();
+    final currentRun = _currentRun;
+    final currentPara = _currentParagraph;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -92,28 +123,28 @@ class _RichTextEditorState extends State<RichTextEditor> {
                 const VerticalDivider(width: 1),
                 _FormatButton(
                   icon: Icons.format_align_left,
-                  isActive: firstPara.style.alignment == TextAlign.left,
+                  isActive: currentPara.style.alignment == TextAlign.left,
                   onTap: () => _setAlignment(TextAlign.left),
                 ),
                 _FormatButton(
                   icon: Icons.format_align_center,
-                  isActive: firstPara.style.alignment == TextAlign.center,
+                  isActive: currentPara.style.alignment == TextAlign.center,
                   onTap: () => _setAlignment(TextAlign.center),
                 ),
                 _FormatButton(
                   icon: Icons.format_align_right,
-                  isActive: firstPara.style.alignment == TextAlign.right,
+                  isActive: currentPara.style.alignment == TextAlign.right,
                   onTap: () => _setAlignment(TextAlign.right),
                 ),
                 const VerticalDivider(width: 1),
                 _FormatButton(
                   icon: Icons.format_list_bulleted,
-                  isActive: firstPara.style.bulletType == BulletType.bullet,
+                  isActive: currentPara.style.bulletType == BulletType.bullet,
                   onTap: () => _setBullet(BulletType.bullet),
                 ),
                 _FormatButton(
                   icon: Icons.format_list_numbered,
-                  isActive: firstPara.style.bulletType == BulletType.number,
+                  isActive: currentPara.style.bulletType == BulletType.number,
                   onTap: () => _setBullet(BulletType.number),
                 ),
                 const VerticalDivider(width: 1),
@@ -164,9 +195,9 @@ class _RichTextEditorState extends State<RichTextEditor> {
     bool? underline,
     bool? strikethrough,
   }) {
-    if (_paragraphs.isEmpty || _paragraphs.first.runs.isEmpty) return;
+    if (_paragraphs.isEmpty || _currentParagraph.runs.isEmpty) return;
 
-    final run = _paragraphs.first.runs.first;
+    final run = _currentRun;
     final newRun = run.copyWith(
       bold: bold != null ? !run.bold : null,
       italic: italic != null ? !run.italic : null,
@@ -174,50 +205,67 @@ class _RichTextEditorState extends State<RichTextEditor> {
       strikethrough: strikethrough != null ? !run.strikethrough : null,
     );
 
-    _paragraphs = _paragraphs.map((para) {
-      final newRuns = para.runs
-          .map(
-            (r) => r.copyWith(
-              bold: newRun.bold,
-              italic: newRun.italic,
-              underline: newRun.underline,
-              strikethrough: newRun.strikethrough,
-            ),
-          )
-          .toList();
-      return para.copyWith(runs: newRuns);
-    }).toList();
+    final paragraphIndex = _currentParagraphIndex
+        .clamp(0, _paragraphs.length - 1)
+        .toInt();
+    final runIndex = _currentRunIndex
+        .clamp(0, _paragraphs[paragraphIndex].runs.length - 1)
+        .toInt();
+    final newRuns = [..._paragraphs[paragraphIndex].runs];
+    newRuns[runIndex] = newRun;
+    _paragraphs = [..._paragraphs];
+    _paragraphs[paragraphIndex] = _paragraphs[paragraphIndex].copyWith(
+      runs: newRuns,
+    );
 
     setState(() {});
     _notifyChange();
   }
 
   void _setAlignment(TextAlign align) {
-    _paragraphs = _paragraphs.map((para) {
-      return para.copyWith(style: para.style.copyWith(alignment: align));
-    }).toList();
+    if (_paragraphs.isEmpty) return;
+    final index = _currentParagraphIndex
+        .clamp(0, _paragraphs.length - 1)
+        .toInt();
+    _paragraphs = [..._paragraphs];
+    _paragraphs[index] = _paragraphs[index].copyWith(
+      style: _paragraphs[index].style.copyWith(alignment: align),
+    );
     setState(() {});
     _notifyChange();
   }
 
   void _setBullet(BulletType type) {
-    _paragraphs = _paragraphs.map((para) {
-      return para.copyWith(
-        style: para.style.copyWith(
-          bulletType: para.style.bulletType == type ? BulletType.none : type,
-        ),
-      );
-    }).toList();
+    if (_paragraphs.isEmpty) return;
+    final index = _currentParagraphIndex
+        .clamp(0, _paragraphs.length - 1)
+        .toInt();
+    final style = _paragraphs[index].style;
+    _paragraphs = [..._paragraphs];
+    _paragraphs[index] = _paragraphs[index].copyWith(
+      style: style.copyWith(
+        bulletType: style.bulletType == type ? BulletType.none : type,
+      ),
+    );
     setState(() {});
     _notifyChange();
   }
 
   void _setFontSize(double? size) {
     if (size == null) return;
-    _paragraphs = _paragraphs.map((para) {
-      final newRuns = para.runs.map((r) => r.copyWith(fontSize: size)).toList();
-      return para.copyWith(runs: newRuns);
-    }).toList();
+    if (_paragraphs.isEmpty || _currentParagraph.runs.isEmpty) return;
+    final paragraphIndex = _currentParagraphIndex
+        .clamp(0, _paragraphs.length - 1)
+        .toInt();
+    final runIndex = _currentRunIndex
+        .clamp(0, _paragraphs[paragraphIndex].runs.length - 1)
+        .toInt();
+    final newRuns = [..._paragraphs[paragraphIndex].runs];
+    newRuns[runIndex] = newRuns[runIndex].copyWith(fontSize: size);
+    _paragraphs = [..._paragraphs];
+    _paragraphs[paragraphIndex] = _paragraphs[paragraphIndex].copyWith(
+      runs: newRuns,
+    );
     setState(() {});
     _notifyChange();
   }
@@ -231,17 +279,24 @@ class _RichTextEditorState extends State<RichTextEditor> {
         ? _paragraphs.first.style
         : const ParagraphStyle();
 
-    _paragraphs = lines.map((line) {
+    _paragraphs = lines.asMap().entries.map((entry) {
+      final index = entry.key;
+      final line = entry.value;
+      final style = index < _paragraphs.length
+          ? _paragraphs[index].style
+          : baseStyle;
       return RichParagraph(
         runs: [baseRun.copyWith(text: line)],
-        style: baseStyle,
+        style: style,
       );
     }).toList();
+    _updateSelectionIndexes();
     _notifyChange();
   }
 
   @override
   void dispose() {
+    _controller.removeListener(_updateSelectionIndexes);
     _controller.dispose();
     _focusNode.dispose();
     super.dispose();
