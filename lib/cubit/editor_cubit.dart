@@ -209,7 +209,7 @@ class EditorCubit extends Cubit<EditorState> {
       );
     } catch (e) {
       emit(
-        state.copyWith(errorMessage: 'Failed to open: \$e', isLoading: false),
+        state.copyWith(errorMessage: 'Failed to open: $e', isLoading: false),
       );
     }
   }
@@ -225,7 +225,7 @@ class EditorCubit extends Cubit<EditorState> {
         ),
       );
     } catch (e) {
-      emit(state.copyWith(errorMessage: 'Failed to save: \$e'));
+      emit(state.copyWith(errorMessage: 'Failed to save: $e'));
     }
   }
 

@@ -13,13 +13,104 @@ import '../models/animation.dart';
 import '../models/theme.dart';
 import 'openxml_utils.dart';
 
-/// Imports a `.pptx` by resolving the PresentationML inheritance chain the way
-/// PowerPoint does: each slide inherits geometry, text styling, colors and
-/// background from its slide layout, which inherits from a slide master, which
-/// references a theme. Inherited values are baked into concrete [SlideElement]s
-/// so the existing flat renderer can draw them correctly.
+class LegacyPptConversion {
+  const LegacyPptConversion(this.pptxPath, {this.cleanup});
+
+  final String pptxPath;
+  final Future<void> Function()? cleanup;
+
+  Future<void> dispose() async {
+    await cleanup?.call();
+  }
+}
+
+class LegacyPptConverter {
+  const LegacyPptConverter({this.executableCandidates});
+
+  final List<String>? executableCandidates;
+
+  Future<LegacyPptConversion> convert(String pptPath) async {
+    final outDir = await Directory.systemTemp.createTemp('powerx_ppt_');
+    final candidates = executableCandidates ?? _defaultExecutableCandidates();
+
+    Object? lastError;
+    for (final executable in candidates) {
+      try {
+        final result = await Process.run(executable, [
+          '--headless',
+          '--convert-to',
+          'pptx',
+          '--outdir',
+          outDir.path,
+          pptPath,
+        ]);
+        if (result.exitCode == 0) {
+          final pptxPath = _convertedPathFor(outDir.path, pptPath);
+          if (await File(pptxPath).exists()) {
+            return LegacyPptConversion(
+              pptxPath,
+              cleanup: () async {
+                if (await outDir.exists()) {
+                  await outDir.delete(recursive: true);
+                }
+              },
+            );
+          }
+          lastError = 'converted file was not created';
+        } else {
+          lastError = '${result.stderr}${result.stdout}';
+        }
+      } on ProcessException catch (e) {
+        lastError = e;
+      }
+    }
+
+    if (await outDir.exists()) {
+      await outDir.delete(recursive: true);
+    }
+    throw Exception(
+      'Legacy .ppt import requires LibreOffice or OpenOffice to be installed. '
+      'Conversion failed: $lastError',
+    );
+  }
+
+  List<String> _defaultExecutableCandidates() {
+    if (Platform.isMacOS) {
+      return const [
+        '/Applications/LibreOffice.app/Contents/MacOS/soffice',
+        '/Applications/OpenOffice.app/Contents/MacOS/soffice',
+        'soffice',
+        'libreoffice',
+      ];
+    }
+    if (Platform.isWindows) {
+      return const [
+        r'C:\Program Files\LibreOffice\program\soffice.exe',
+        r'C:\Program Files (x86)\LibreOffice\program\soffice.exe',
+        'soffice.exe',
+        'soffice',
+      ];
+    }
+    return const ['libreoffice', 'soffice'];
+  }
+
+  String _convertedPathFor(String outDir, String pptPath) {
+    final fileName = pptPath.split(Platform.pathSeparator).last;
+    final dot = fileName.lastIndexOf('.');
+    final stem = dot == -1 ? fileName : fileName.substring(0, dot);
+    return '$outDir${Platform.pathSeparator}$stem.pptx';
+  }
+}
+
+/// Imports `.pptx` files by resolving the PresentationML inheritance chain the
+/// way PowerPoint does. Legacy binary `.ppt` files are converted to `.pptx`
+/// first, then parsed through the same OOXML pipeline.
 class PptxImporter {
+  PptxImporter({LegacyPptConverter? legacyPptConverter})
+    : _legacyPptConverter = legacyPptConverter ?? const LegacyPptConverter();
+
   final _uuid = const Uuid();
+  final LegacyPptConverter _legacyPptConverter;
 
   late Archive _archive;
   late Map<String, Map<String, String>> _relsMap;
@@ -32,6 +123,22 @@ class PptxImporter {
 
   Future<Presentation> import(String filePath) async {
     final bytes = await File(filePath).readAsBytes();
+    if (_isLegacyPpt(bytes)) {
+      final conversion = await _legacyPptConverter.convert(filePath);
+      try {
+        final convertedBytes = await File(conversion.pptxPath).readAsBytes();
+        return _importPptxBytes(convertedBytes, displayFilePath: filePath);
+      } finally {
+        await conversion.dispose();
+      }
+    }
+    return _importPptxBytes(bytes, displayFilePath: filePath);
+  }
+
+  Future<Presentation> _importPptxBytes(
+    List<int> bytes, {
+    required String displayFilePath,
+  }) async {
     final archive = ZipDecoder().decodeBytes(bytes);
     _archive = archive;
 
@@ -84,8 +191,17 @@ class PptxImporter {
       slides: slides.isEmpty ? [Slide(id: _uuid.v4(), slideNumber: 1)] : slides,
       theme: firstTheme,
       settings: PresentationSettings(slideSize: slideSize),
-      filePath: filePath,
+      filePath: displayFilePath,
     );
+  }
+
+  bool _isLegacyPpt(List<int> bytes) {
+    const oleHeader = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+    if (bytes.length < oleHeader.length) return false;
+    for (var i = 0; i < oleHeader.length; i++) {
+      if (bytes[i] != oleHeader[i]) return false;
+    }
+    return true;
   }
 
   // ---------------------------------------------------------------------------

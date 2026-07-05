@@ -113,7 +113,7 @@ class _RibbonState extends State<Ribbon> {
                   Navigator.pop(dialogCtx);
                   final result = await FilePicker.pickFiles(
                     type: FileType.custom,
-                    allowedExtensions: ['pptx'],
+                    allowedExtensions: ['ppt', 'pptx'],
                   );
                   if (result != null) {
                     final path = result.files.single.path;

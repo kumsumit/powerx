@@ -9,6 +9,49 @@ import 'package:powerx/models/chart.dart';
 import 'package:powerx/models/slide_master.dart';
 
 void main() {
+  test('imports legacy ppt by converting it to pptx first', () async {
+    final pptFile = File('${Directory.systemTemp.path}/powerx_legacy_test.ppt');
+    await pptFile.writeAsBytes([
+      0xD0,
+      0xCF,
+      0x11,
+      0xE0,
+      0xA1,
+      0xB1,
+      0x1A,
+      0xE1,
+      0,
+      0,
+      0,
+      0,
+    ]);
+
+    final convertedFile = File(
+      '${Directory.systemTemp.path}/powerx_legacy_converted.pptx',
+    );
+    await convertedFile.writeAsBytes(ZipEncoder().encode(_minimalPptx()));
+
+    var cleanedUp = false;
+    addTearDown(() {
+      if (pptFile.existsSync()) pptFile.deleteSync();
+      if (convertedFile.existsSync()) convertedFile.deleteSync();
+    });
+
+    final presentation = await PptxImporter(
+      legacyPptConverter: _FakeLegacyPptConverter(
+        convertedFile.path,
+        onCleanup: () {
+          cleanedUp = true;
+        },
+      ),
+    ).import(pptFile.path);
+
+    expect(presentation.filePath, pptFile.path);
+    expect(presentation.slides, hasLength(1));
+    expect(presentation.activeSlide.elements.whereType<TextElement>(), isEmpty);
+    expect(cleanedUp, isTrue);
+  });
+
   test('imports slides through relative presentation relationships', () async {
     final archive = Archive()
       ..addFile(
@@ -450,4 +493,54 @@ void main() {
     expect(presentation.slides, hasLength(1));
     expect(presentation.activeSlide.elements, isEmpty);
   });
+}
+
+Archive _minimalPptx() {
+  return Archive()
+    ..addFile(
+      ArchiveFile.string('ppt/presentation.xml', '''
+<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <p:sldSz cx="9144000" cy="5143500"/>
+  <p:sldIdLst>
+    <p:sldId id="256" r:id="rId1"/>
+  </p:sldIdLst>
+</p:presentation>
+'''),
+    )
+    ..addFile(
+      ArchiveFile.string('ppt/_rels/presentation.xml.rels', '''
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>
+</Relationships>
+'''),
+    )
+    ..addFile(
+      ArchiveFile.string('ppt/slides/slide1.xml', '''
+<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:cSld>
+    <p:spTree>
+      <p:nvGrpSpPr/>
+      <p:grpSpPr/>
+    </p:spTree>
+  </p:cSld>
+</p:sld>
+'''),
+    );
+}
+
+class _FakeLegacyPptConverter extends LegacyPptConverter {
+  const _FakeLegacyPptConverter(this.convertedPath, {required this.onCleanup});
+
+  final String convertedPath;
+  final void Function() onCleanup;
+
+  @override
+  Future<LegacyPptConversion> convert(String pptPath) async {
+    return LegacyPptConversion(
+      convertedPath,
+      cleanup: () async {
+        onCleanup();
+      },
+    );
+  }
 }
