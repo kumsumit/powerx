@@ -1,11 +1,14 @@
 import 'dart:io';
 
 import 'package:archive/archive.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:powerx/engine/presentation_backend.dart';
 import 'package:powerx/engine/pptx_importer.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   test('opens pptx without requiring the office engine', () async {
     final pptxFile = File('${Directory.systemTemp.path}/powerx_backend.pptx');
     await pptxFile.writeAsBytes(ZipEncoder().encode(_minimalPptx()));
@@ -54,6 +57,29 @@ void main() {
     expect(presentation.filePath, pptFile.path);
     expect(presentation.slides, hasLength(1));
     expect(engine.ensureAvailableCalls, 1);
+  });
+
+  test('maps Play ownership failure to install unavailable exception', () async {
+    const channel = MethodChannel('powerx/test_office_engine');
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          throw PlatformException(
+            code: 'engine_install_failed',
+            message:
+                'Split Install Error (-15): The app is not owned by any user on this device.',
+          );
+        });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    final engine = AndroidOnDemandOfficeEngine(channel: channel);
+
+    await expectLater(
+      engine.ensureAvailable(),
+      throwsA(isA<OfficeEngineInstallUnavailableException>()),
+    );
   });
 }
 

@@ -15,6 +15,11 @@ class OfficeEngineUnavailableException implements Exception {
   String toString() => message;
 }
 
+class OfficeEngineInstallUnavailableException
+    extends OfficeEngineUnavailableException {
+  const OfficeEngineInstallUnavailableException(super.message);
+}
+
 abstract class PresentationBackend {
   Future<Presentation> open(String filePath);
 
@@ -148,7 +153,23 @@ class AndroidOnDemandOfficeEngine implements OfficeCompatibilityEngine {
 
   @override
   Future<void> ensureAvailable() async {
-    final installed = await _channel.invokeMethod<bool>('ensureInstalled');
+    final bool? installed;
+    try {
+      installed = await _channel.invokeMethod<bool>('ensureInstalled');
+    } on PlatformException catch (e) {
+      if (e.code == 'engine_install_failed') {
+        final message = e.message ?? '';
+        if (message.contains('not owned')) {
+          throw const OfficeEngineInstallUnavailableException(
+            'Office Compatibility Engine download is unavailable because this app was not installed from Play Store.',
+          );
+        }
+        throw OfficeEngineUnavailableException(
+          'Office Compatibility Engine install failed: $message',
+        );
+      }
+      rethrow;
+    }
     if (installed != true) {
       throw const OfficeEngineUnavailableException(
         'Office Compatibility Engine is not installed on this device.',

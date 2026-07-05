@@ -240,6 +240,8 @@ class EditorCubit extends Cubit<EditorState> {
   }
 
   bool _requiresOfficeEngine(String filePath, Object error) {
+    if (error is OfficeEngineInstallUnavailableException) return false;
+
     final lowerPath = filePath.toLowerCase();
     final message = error.toString();
     final isLegacyPpt =
@@ -252,6 +254,10 @@ class EditorCubit extends Cubit<EditorState> {
   }
 
   String _friendlyOpenError(String filePath, Object error) {
+    if (error is OfficeEngineInstallUnavailableException) {
+      return '${error.message} Install Storax from Play Store/internal testing, or bundle the engine in this build.';
+    }
+
     if (_requiresOfficeEngine(filePath, error)) {
       return 'Failed to open .ppt file. Download the Office Compatibility Engine, then try again.';
     }
