@@ -1,6 +1,7 @@
 library;
 
 export 'cubit/editor_cubit.dart';
+export 'engine/presentation_backend.dart';
 export 'engine/pptx_exporter.dart';
 export 'engine/pptx_importer.dart';
 export 'models/animation.dart';

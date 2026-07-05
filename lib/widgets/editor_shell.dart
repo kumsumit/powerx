@@ -26,7 +26,12 @@ class EditorShell extends StatelessWidget {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text(state.errorMessage!),
+                content: Text(
+                  state.errorMessage!,
+                  maxLines: 4,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                behavior: SnackBarBehavior.floating,
                 backgroundColor: Colors.red,
                 action: SnackBarAction(
                   label: 'Dismiss',

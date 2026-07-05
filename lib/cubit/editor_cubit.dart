@@ -11,8 +11,7 @@ import '../models/theme.dart';
 import '../models/table.dart' as pt;
 import '../models/chart.dart';
 import '../engine/command_pattern.dart';
-import '../engine/pptx_importer.dart';
-import '../engine/pptx_exporter.dart';
+import '../engine/presentation_backend.dart';
 
 class EditorState extends Equatable {
   final Presentation presentation;
@@ -125,10 +124,12 @@ enum Tool {
 class EditorCubit extends Cubit<EditorState> {
   final _uuid = const Uuid();
   final CommandHistory _history = CommandHistory(maxSize: 200);
+  final PresentationBackend _presentationBackend;
   SlideElement? _clipboard;
 
-  EditorCubit()
-    : super(
+  EditorCubit({PresentationBackend? presentationBackend})
+    : _presentationBackend = presentationBackend ?? HybridPresentationBackend(),
+      super(
         EditorState(
           presentation: Presentation(
             id: 'pres_1',
@@ -196,8 +197,7 @@ class EditorCubit extends Cubit<EditorState> {
   Future<void> openPresentation(String filePath) async {
     emit(state.copyWith(isLoading: true));
     try {
-      final importer = PptxImporter();
-      final pres = await importer.import(filePath);
+      final pres = await _presentationBackend.open(filePath);
       _history.clear();
       emit(
         EditorState(
@@ -209,15 +209,37 @@ class EditorCubit extends Cubit<EditorState> {
       );
     } catch (e) {
       emit(
-        state.copyWith(errorMessage: 'Failed to open: $e', isLoading: false),
+        state.copyWith(
+          errorMessage: _friendlyOpenError(filePath, e),
+          isLoading: false,
+        ),
       );
     }
   }
 
+  String _friendlyOpenError(String filePath, Object error) {
+    final lowerPath = filePath.toLowerCase();
+    final message = error.toString();
+    final isLegacyPpt =
+        lowerPath.endsWith('.ppt') && !lowerPath.endsWith('.pptx');
+
+    if (isLegacyPpt &&
+        (error is OfficeEngineUnavailableException ||
+            message.contains('Legacy .ppt import requires'))) {
+      return 'Failed to open .ppt file. Download the Office Compatibility Engine, then try again.';
+    }
+
+    const maxLength = 180;
+    final normalized = message.replaceAll(RegExp(r'\s+'), ' ').trim();
+    final details = normalized.length <= maxLength
+        ? normalized
+        : '${normalized.substring(0, maxLength)}...';
+    return 'Failed to open: $details';
+  }
+
   Future<void> savePresentation(String filePath) async {
     try {
-      final exporter = PptxExporter();
-      await exporter.export(state.presentation, filePath);
+      await _presentationBackend.save(state.presentation, filePath);
       emit(
         state.copyWith(
           presentation: state.presentation.copyWith(filePath: filePath),

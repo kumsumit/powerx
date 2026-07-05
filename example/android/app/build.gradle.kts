@@ -1,5 +1,6 @@
 plugins {
     id("com.android.application")
+    id("org.jetbrains.kotlin.android")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
@@ -25,6 +26,8 @@ android {
         versionName = flutter.versionName
     }
 
+    dynamicFeatures += setOf(":office_engine")
+
     buildTypes {
         release {
             // TODO: Add your own signing config for the release build.
@@ -38,6 +41,10 @@ kotlin {
     compilerOptions {
         jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21
     }
+}
+
+dependencies {
+    implementation("com.google.android.play:feature-delivery-ktx:2.1.0")
 }
 
 flutter {

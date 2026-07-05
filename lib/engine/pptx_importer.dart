@@ -29,9 +29,12 @@ class LegacyPptConverter {
 
   final List<String>? executableCandidates;
 
+  List<String> executableCandidatesForPlatform() =>
+      executableCandidates ?? _defaultExecutableCandidates();
+
   Future<LegacyPptConversion> convert(String pptPath) async {
     final outDir = await Directory.systemTemp.createTemp('powerx_ppt_');
-    final candidates = executableCandidates ?? _defaultExecutableCandidates();
+    final candidates = executableCandidatesForPlatform();
 
     Object? lastError;
     for (final executable in candidates) {
@@ -126,13 +129,23 @@ class PptxImporter {
     if (_isLegacyPpt(bytes)) {
       final conversion = await _legacyPptConverter.convert(filePath);
       try {
-        final convertedBytes = await File(conversion.pptxPath).readAsBytes();
-        return _importPptxBytes(convertedBytes, displayFilePath: filePath);
+        return importConvertedLegacyPpt(
+          conversion.pptxPath,
+          displayFilePath: filePath,
+        );
       } finally {
         await conversion.dispose();
       }
     }
     return _importPptxBytes(bytes, displayFilePath: filePath);
+  }
+
+  Future<Presentation> importConvertedLegacyPpt(
+    String pptxPath, {
+    required String displayFilePath,
+  }) async {
+    final convertedBytes = await File(pptxPath).readAsBytes();
+    return _importPptxBytes(convertedBytes, displayFilePath: displayFilePath);
   }
 
   Future<Presentation> _importPptxBytes(
