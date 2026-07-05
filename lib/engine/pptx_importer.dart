@@ -127,6 +127,11 @@ class PptxImporter {
   Future<Presentation> import(String filePath) async {
     final bytes = await File(filePath).readAsBytes();
     if (_isLegacyPpt(bytes)) {
+      if (Platform.isAndroid) {
+        throw Exception(
+          'Office Compatibility Engine is required for legacy .ppt import on Android.',
+        );
+      }
       final conversion = await _legacyPptConverter.convert(filePath);
       try {
         return importConvertedLegacyPpt(

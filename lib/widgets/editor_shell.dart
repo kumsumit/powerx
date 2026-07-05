@@ -24,6 +24,9 @@ class EditorShell extends StatelessWidget {
 
         if (state.errorMessage != null) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
+            final cubit = context.read<EditorCubit>();
+            final needsOfficeEngine =
+                state.pendingOfficeEngineFilePath != null;
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(
@@ -34,8 +37,10 @@ class EditorShell extends StatelessWidget {
                 behavior: SnackBarBehavior.floating,
                 backgroundColor: Colors.red,
                 action: SnackBarAction(
-                  label: 'Dismiss',
-                  onPressed: context.read<EditorCubit>().clearError,
+                  label: needsOfficeEngine ? 'Download' : 'Dismiss',
+                  onPressed: needsOfficeEngine
+                      ? cubit.downloadOfficeEngineAndRetry
+                      : cubit.clearError,
                 ),
               ),
             );

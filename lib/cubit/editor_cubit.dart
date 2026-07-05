@@ -26,6 +26,7 @@ class EditorState extends Equatable {
   final bool canUndo;
   final bool canRedo;
   final bool isLoading;
+  final String? pendingOfficeEngineFilePath;
 
   const EditorState({
     required this.presentation,
@@ -40,6 +41,7 @@ class EditorState extends Equatable {
     this.canUndo = false,
     this.canRedo = false,
     this.isLoading = false,
+    this.pendingOfficeEngineFilePath,
   });
 
   EditorState copyWith({
@@ -55,8 +57,10 @@ class EditorState extends Equatable {
     bool? canUndo,
     bool? canRedo,
     bool? isLoading,
+    String? pendingOfficeEngineFilePath,
     bool clearSelection = false,
     bool clearError = false,
+    bool clearPendingOfficeEngineFile = false,
   }) => EditorState(
     presentation: presentation ?? this.presentation,
     selectedElementId: clearSelection
@@ -74,6 +78,9 @@ class EditorState extends Equatable {
     canUndo: canUndo ?? this.canUndo,
     canRedo: canRedo ?? this.canRedo,
     isLoading: isLoading ?? this.isLoading,
+    pendingOfficeEngineFilePath: clearPendingOfficeEngineFile
+        ? null
+        : (pendingOfficeEngineFilePath ?? this.pendingOfficeEngineFilePath),
   );
 
   Slide get activeSlide => presentation.slides[presentation.activeSlideIndex];
@@ -100,6 +107,7 @@ class EditorState extends Equatable {
     canUndo,
     canRedo,
     isLoading,
+    pendingOfficeEngineFilePath,
   ];
 }
 
@@ -195,7 +203,13 @@ class EditorCubit extends Cubit<EditorState> {
   }
 
   Future<void> openPresentation(String filePath) async {
-    emit(state.copyWith(isLoading: true));
+    emit(
+      state.copyWith(
+        isLoading: true,
+        clearError: true,
+        clearPendingOfficeEngineFile: true,
+      ),
+    );
     try {
       final pres = await _presentationBackend.open(filePath);
       _history.clear();
@@ -208,27 +222,41 @@ class EditorCubit extends Cubit<EditorState> {
         ),
       );
     } catch (e) {
+      final requiresOfficeEngine = _requiresOfficeEngine(filePath, e);
       emit(
         state.copyWith(
           errorMessage: _friendlyOpenError(filePath, e),
+          pendingOfficeEngineFilePath: requiresOfficeEngine ? filePath : null,
           isLoading: false,
         ),
       );
     }
   }
 
-  String _friendlyOpenError(String filePath, Object error) {
+  Future<void> downloadOfficeEngineAndRetry() async {
+    final filePath = state.pendingOfficeEngineFilePath;
+    if (filePath == null) return;
+    await openPresentation(filePath);
+  }
+
+  bool _requiresOfficeEngine(String filePath, Object error) {
     final lowerPath = filePath.toLowerCase();
     final message = error.toString();
     final isLegacyPpt =
         lowerPath.endsWith('.ppt') && !lowerPath.endsWith('.pptx');
 
-    if (isLegacyPpt &&
+    return isLegacyPpt &&
         (error is OfficeEngineUnavailableException ||
-            message.contains('Legacy .ppt import requires'))) {
+            message.contains('Legacy .ppt import requires') ||
+            message.contains('Office Compatibility Engine'));
+  }
+
+  String _friendlyOpenError(String filePath, Object error) {
+    if (_requiresOfficeEngine(filePath, error)) {
       return 'Failed to open .ppt file. Download the Office Compatibility Engine, then try again.';
     }
 
+    final message = error.toString();
     const maxLength = 180;
     final normalized = message.replaceAll(RegExp(r'\s+'), ' ').trim();
     final details = normalized.length <= maxLength
@@ -509,7 +537,12 @@ class EditorCubit extends Cubit<EditorState> {
     _updatePresentation(state.presentation.copyWith(slides: slides));
   }
 
-  void clearError() => emit(state.copyWith(clearError: true));
+  void clearError() => emit(
+    state.copyWith(
+      clearError: true,
+      clearPendingOfficeEngineFile: true,
+    ),
+  );
 
   // ── Clipboard ──────────────────────────────────────────────────────────────
 
