@@ -22,8 +22,10 @@ class SlideThumbnailPanel extends StatelessWidget {
               color: Colors.white,
               border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
             ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            child: Wrap(
+              alignment: WrapAlignment.spaceEvenly,
+              runSpacing: 4,
+              spacing: 4,
               children: [
                 _PanelActionButton(
                   icon: Icons.add,

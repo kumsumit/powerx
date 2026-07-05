@@ -56,21 +56,24 @@ class _RibbonState extends State<Ribbon> {
   Widget _buildTabBar(BuildContext context) {
     return SizedBox(
       height: 34,
-      child: Row(
-        children: [
-          for (int i = 0; i < _tabLabels.length; i++)
-            _Tab(
-              label: _tabLabels[i],
-              isActive: _activeTab == i,
-              onTap: () {
-                if (i == 0) {
-                  _showFileMenu(context);
-                } else {
-                  setState(() => _activeTab = i);
-                }
-              },
-            ),
-        ],
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            for (int i = 0; i < _tabLabels.length; i++)
+              _Tab(
+                label: _tabLabels[i],
+                isActive: _activeTab == i,
+                onTap: () {
+                  if (i == 0) {
+                    _showFileMenu(context);
+                  } else {
+                    setState(() => _activeTab = i);
+                  }
+                },
+              ),
+          ],
+        ),
       ),
     );
   }

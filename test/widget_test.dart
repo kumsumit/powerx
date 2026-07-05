@@ -17,4 +17,20 @@ void main() {
     expect(find.byType(EditorShell), findsOneWidget);
     expect(find.text('Slide 1 of 1'), findsOneWidget);
   });
+
+  testWidgets('PowerXEditor fits a compact mobile viewport', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(720, 1600);
+    tester.view.devicePixelRatio = 1.0;
+
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const MaterialApp(home: PowerXEditor()));
+
+    expect(find.byType(EditorShell), findsOneWidget);
+    expect(find.text('Slide 1 of 1'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }
